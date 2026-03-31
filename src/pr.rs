@@ -26,7 +26,7 @@ pub fn parse_pr_ref(input: &str) -> Result<PrRef> {
 fn parse_url(input: &str) -> Option<PrRef> {
     let input = input.trim().trim_end_matches('/');
     let parts: Vec<&str> = input.split('/').collect();
-    if parts.len() >= 7 && parts[5] == "pull" {
+    if parts.len() >= 7 && parts[2] == "github.com" && parts[5] == "pull" {
         let number = parts[6].parse().ok()?;
         return Some(PrRef { owner: parts[3].to_string(), repo: parts[4].to_string(), number });
     }

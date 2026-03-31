@@ -175,8 +175,9 @@ fn parse_threads(pr: &PullRequestGql) -> Vec<Thread> {
         .filter_map(|t| {
             let comments = &t.comments.nodes;
             let first = comments.first()?;
+            let id = first.database_id?; // skip comments with no database ID
             let first_comment = Comment {
-                id: first.database_id.unwrap_or(0),
+                id,
                 author: author_login(&first.author),
                 path: first.path.clone(),
                 line: first.line,

@@ -71,10 +71,18 @@ impl State {
     }
 }
 
-/// Get the .rug directory path (in the current working directory).
+/// Get the .rug directory path at the git repository root.
+/// Falls back to the current working directory if not in a git repo.
 pub fn rug_dir() -> Result<PathBuf> {
-    let cwd = std::env::current_dir().context("Failed to get current directory")?;
-    Ok(cwd.join(".rug"))
+    let root = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| PathBuf::from(s.trim().to_string()))
+        .unwrap_or(std::env::current_dir().context("Failed to get current directory")?);
+    Ok(root.join(".rug"))
 }
 
 #[cfg(test)]

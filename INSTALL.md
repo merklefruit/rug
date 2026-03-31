@@ -59,7 +59,7 @@ echo '.rug/' >> .gitignore
 Download the example config:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/merklefruit/review-until-green/main/rug.toml.example \
+curl -fsSL https://raw.githubusercontent.com/merklefruit/review-until-green/main/rug.example.toml \
   -o rug.toml
 ```
 

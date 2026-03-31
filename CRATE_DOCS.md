@@ -18,7 +18,7 @@ rug reset                                          # clear local addressed state
 
 ## Configuration
 
-Optional `rug.toml` in the repo root. See [rug.toml.example](./rug.toml.example).
+Optional `rug.toml` in the repo root. See [rug.example.toml](./rug.example.toml).
 
 ```toml
 # Only fix comments from specific authors (default: all)
@@ -46,4 +46,5 @@ src/
   verdict.rs   Verdict computation + comment filtering
 ```
 
-All GitHub API calls go through `gh api graphql` as a subprocess — no HTTP client dependency. Auth is inherited from the user's `gh` session or `GITHUB_TOKEN` env var.
+All GitHub API calls go through `gh api graphql` as a subprocess: no HTTP client dependency. 
+Auth is inherited from the user's `gh` session or `GITHUB_TOKEN` env var.
