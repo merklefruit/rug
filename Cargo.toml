@@ -5,6 +5,10 @@ edition = "2021"
 description = "Compact PR review state for coding agents"
 license = "MIT"
 
+[lib]
+name = "review_until_green"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rug"
 path = "src/main.rs"
