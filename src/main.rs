@@ -2,6 +2,7 @@ mod types;
 mod pr;
 mod config;
 mod state;
+mod github;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
