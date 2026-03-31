@@ -1,13 +1,11 @@
 [package]
 name = "review-until-green"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+authors = ["merklefruit <merklefruit@proton.me>"]
 description = "Compact PR review state for coding agents"
+repository = "https://github.com/merklefruit/rug"
 license = "MIT"
-
-[lib]
-name = "review_until_green"
-path = "src/lib.rs"
 
 [[bin]]
 name = "rug"

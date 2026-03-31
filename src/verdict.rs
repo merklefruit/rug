@@ -1,6 +1,9 @@
-use crate::config::Config;
-use crate::state::State;
-use crate::types::*;
+//! Verdict computation and comment filtering.
+//!
+//! Takes PR data from GitHub, filters by addressed state and config,
+//! and computes whether the PR is approved, needs changes, or is pending.
+
+use crate::{config::Config, state::State, types::*};
 
 /// Filter threads to only unresolved ones, optionally filtered by review_bots config.
 fn relevant_threads<'a>(threads: &'a [Thread], config: &Config) -> Vec<&'a Thread> {
@@ -24,44 +27,26 @@ pub fn compute(
     config: &Config,
 ) -> (Verdict, Vec<CommentOutput>, SummaryOutput) {
     // Terminal states
-    if data.state == PrState::Merged {
-        return (
-            Verdict::Merged,
-            vec![],
-            SummaryOutput {
-                total_unresolved: 0,
-                new_since_last: 0,
-                addressed: 0,
-            },
-        );
-    }
-    if data.state == PrState::Closed {
-        return (
-            Verdict::Closed,
-            vec![],
-            SummaryOutput {
-                total_unresolved: 0,
-                new_since_last: 0,
-                addressed: 0,
-            },
-        );
+    if matches!(data.state, PrState::Merged | PrState::Closed) {
+        let verdict = if data.state == PrState::Merged { Verdict::Merged } else { Verdict::Closed };
+        let empty = SummaryOutput { total_unresolved: 0, new_since_last: 0, addressed: 0 };
+        return (verdict, vec![], empty);
     }
 
     let relevant = relevant_threads(&data.threads, config);
     let total_unresolved = relevant.len();
 
-    let addressed_count = relevant
+    let mut addressed_count = 0;
+    let new_comments: Vec<CommentOutput> = relevant
         .iter()
-        .filter(|t| state.is_addressed(t.first_comment.id))
-        .count();
-
-    let new_threads: Vec<_> = relevant
-        .iter()
-        .filter(|t| !state.is_addressed(t.first_comment.id))
-        .collect();
-
-    let new_comments: Vec<CommentOutput> = new_threads
-        .iter()
+        .filter(|t| {
+            if state.is_addressed(t.first_comment.id) {
+                addressed_count += 1;
+                false
+            } else {
+                true
+            }
+        })
         .map(|t| CommentOutput {
             id: t.first_comment.id,
             author: t.first_comment.author.clone(),
@@ -73,10 +58,7 @@ pub fn compute(
             replies: t
                 .replies
                 .iter()
-                .map(|r| ReplyOutput {
-                    author: r.author.clone(),
-                    body: r.body.clone(),
-                })
+                .map(|r| ReplyOutput { author: r.author.clone(), body: r.body.clone() })
                 .collect(),
         })
         .collect();
@@ -87,12 +69,13 @@ pub fn compute(
         addressed: addressed_count,
     };
 
-    // Check CI status
-    let all_settled = data.checks.iter().all(|c| c.status.is_terminal());
-    let any_failing = data.checks.iter().any(|c| c.status == CheckStatus::Failure);
-    let ci_pending = !all_settled;
+    // CI status — single pass
+    let (all_settled, any_failing) =
+        data.checks.iter().fold((true, false), |(settled, failing), c| {
+            (settled && c.status.is_terminal(), failing || c.status == CheckStatus::Failure)
+        });
 
-    let verdict = if ci_pending {
+    let verdict = if !all_settled {
         Verdict::Pending
     } else if !new_comments.is_empty() {
         Verdict::ChangesRequested
@@ -107,8 +90,9 @@ pub fn compute(
 
 /// Build CiOutput from checks.
 pub fn build_ci_output(checks: &[Check]) -> CiOutput {
-    let all_settled = checks.iter().all(|c| c.status.is_terminal());
-    let any_failing = checks.iter().any(|c| c.status == CheckStatus::Failure);
+    let (all_settled, any_failing) = checks.iter().fold((true, false), |(settled, failing), c| {
+        (settled && c.status.is_terminal(), failing || c.status == CheckStatus::Failure)
+    });
 
     let status = if !all_settled {
         "pending"
@@ -154,11 +138,7 @@ mod tests {
     }
 
     fn make_check(name: &str, status: CheckStatus) -> Check {
-        Check {
-            name: name.to_string(),
-            status,
-            url: None,
-        }
+        Check { name: name.to_string(), status, url: None }
     }
 
     #[test]
@@ -301,10 +281,8 @@ mod tests {
             checks: vec![make_check("ci", CheckStatus::Success)],
             pushed_at: None,
         };
-        let config = Config {
-            review_bots: Some(vec!["devin-ai[bot]".to_string()]),
-            ..Config::default()
-        };
+        let config =
+            Config { review_bots: Some(vec!["devin-ai[bot]".to_string()]), ..Config::default() };
         let (_, comments, summary) = compute(&data, &State::default(), &config);
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].author, "devin-ai[bot]");

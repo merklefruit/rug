@@ -1,16 +1,21 @@
+//! Configuration from `rug.toml`.
+
 use anyhow::Result;
 use serde::Deserialize;
 use std::path::Path;
 
+/// Configuration loaded from an optional `rug.toml` file in the repo root.
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// Only process comments from these authors. None = all comments.
+    /// Only process comments from these authors. `None` means all comments are actionable.
     pub review_bots: Option<Vec<String>>,
-    /// Seconds to wait after all checks settle before final status check.
+    /// Seconds to wait after all checks settle before final status check (used by the skill).
     #[serde(default = "default_settle_window")]
+    #[allow(dead_code)]
     pub settle_window: u64,
-    /// Max fix loops before the skill should stop.
+    /// Max fix loops before the skill should stop (used by the skill).
     #[serde(default = "default_max_loops")]
+    #[allow(dead_code)]
     pub max_loops: u32,
 }
 

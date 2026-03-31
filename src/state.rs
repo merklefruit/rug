@@ -1,8 +1,16 @@
+//! Local state management for delta tracking.
+//!
+//! Persists addressed comment IDs in `.rug/` so that subsequent
+//! `rug status` calls only return new/unresolved comments.
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
+/// Tracked state for a single PR, persisted as JSON in `.rug/`.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct State {
     /// Comment IDs that have been addressed by the agent.

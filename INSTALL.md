@@ -1,71 +1,66 @@
-# Installing rug
+# Installing review-until-green
+
+Two things to install: the `rug` CLI and the `/review-until-green` skill.
 
 ## Prerequisites
 
-- [Rust toolchain](https://rustup.rs/) (for building from source)
-- [GitHub CLI (`gh`)](https://cli.github.com/) — must be installed and authenticated
+- [Rust toolchain](https://rustup.rs/)
+- [GitHub CLI (`gh`)](https://cli.github.com/), authenticated (`gh auth login`)
 
-Verify gh is set up:
-```bash
-gh auth status
-```
-
-## Install from source
+## 1. Install the CLI
 
 ```bash
-cargo install --git https://github.com/<owner>/review-until-green
+cargo install --git https://github.com/merklefruit/review-until-green
 ```
 
-This installs the `rug` binary to `~/.cargo/bin/`.
+Verify: `rug --help`
 
-## Install the Claude Code skill
+## 2. Install the skill
 
-Copy the skill file to your Claude Code skills directory:
+### Via skills.sh (recommended)
 
 ```bash
-cp skill/review-until-green.md ~/.claude/skills/
+npx skills add merklefruit/review-until-green
 ```
 
-Or, if you use a project-level skills directory:
+### Manual (curl)
+
+Global install (all projects):
+
+```bash
+mkdir -p ~/.claude/skills
+curl -fsSL https://raw.githubusercontent.com/merklefruit/review-until-green/main/skills/review-until-green/SKILL.md \
+  -o ~/.claude/skills/review-until-green.md
+```
+
+Project-level (current repo only):
 
 ```bash
 mkdir -p .claude/skills
-cp skill/review-until-green.md .claude/skills/
+curl -fsSL https://raw.githubusercontent.com/merklefruit/review-until-green/main/skills/review-until-green/SKILL.md \
+  -o .claude/skills/review-until-green.md
 ```
 
-## Verify
+## 3. Add `.rug/` to your .gitignore
 
 ```bash
-rug --help
+echo '.rug/' >> .gitignore
 ```
 
 ## Usage
 
-From a branch with an open PR:
-
 ```
 /review-until-green
-```
-
-Or with a specific PR:
-
-```
 /review-until-green https://github.com/owner/repo/pull/123
 ```
 
 ## Configuration (optional)
 
-Create `rug.toml` in your repo root:
+Download the example config:
 
-```toml
-# Only fix comments from specific authors (default: all)
-# review_bots = ["devin-ai[bot]"]
-
-# Seconds to wait after checks settle (default: 60)
-settle_window = 60
-
-# Max fix loops (default: 5)
-max_loops = 5
+```bash
+curl -fsSL https://raw.githubusercontent.com/merklefruit/review-until-green/main/rug.toml.example \
+  -o rug.toml
 ```
 
-Add `.rug/` to your `.gitignore` — it stores local state for delta tracking.
+Edit `rug.toml` to customize `review_bots`, `settle_window`, and `max_loops`.

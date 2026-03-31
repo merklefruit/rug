@@ -1,4 +1,9 @@
-use anyhow::{bail, Context, Result};
+//! PR reference parsing and resolution.
+//!
+//! Supports GitHub PR URLs, short refs (`owner/repo#123`), and
+//! automatic resolution from the current git branch via `gh pr view`.
+
+use anyhow::{Context, Result, bail};
 use std::process::Command;
 
 use crate::types::PrRef;
@@ -13,7 +18,9 @@ pub fn parse_pr_ref(input: &str) -> Result<PrRef> {
     if let Some(pr) = parse_short_ref(input) {
         return Ok(pr);
     }
-    bail!("Cannot parse PR reference: {input}\nExpected: URL (https://github.com/owner/repo/pull/123) or owner/repo#123")
+    bail!(
+        "Cannot parse PR reference: {input}\nExpected: URL (https://github.com/owner/repo/pull/123) or owner/repo#123"
+    )
 }
 
 fn parse_url(input: &str) -> Option<PrRef> {
@@ -21,11 +28,7 @@ fn parse_url(input: &str) -> Option<PrRef> {
     let parts: Vec<&str> = input.split('/').collect();
     if parts.len() >= 7 && parts[5] == "pull" {
         let number = parts[6].parse().ok()?;
-        return Some(PrRef {
-            owner: parts[3].to_string(),
-            repo: parts[4].to_string(),
-            number,
-        });
+        return Some(PrRef { owner: parts[3].to_string(), repo: parts[4].to_string(), number });
     }
     None
 }
@@ -34,11 +37,7 @@ fn parse_short_ref(input: &str) -> Option<PrRef> {
     let (repo_part, num_part) = input.split_once('#')?;
     let (owner, repo) = repo_part.split_once('/')?;
     let number = num_part.parse().ok()?;
-    Some(PrRef {
-        owner: owner.to_string(),
-        repo: repo.to_string(),
-        number,
-    })
+    Some(PrRef { owner: owner.to_string(), repo: repo.to_string(), number })
 }
 
 /// Resolve the PR for the current branch using `gh pr view`.
@@ -53,10 +52,7 @@ pub fn resolve_from_branch() -> Result<PrRef> {
         bail!("No PR found for current branch: {stderr}");
     }
 
-    let url = String::from_utf8(output.stdout)
-        .context("Invalid UTF-8 from gh")?
-        .trim()
-        .to_string();
+    let url = String::from_utf8(output.stdout).context("Invalid UTF-8 from gh")?.trim().to_string();
 
     parse_pr_ref(&url)
 }

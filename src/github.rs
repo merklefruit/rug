@@ -1,4 +1,10 @@
-use anyhow::{bail, Context, Result};
+//! GitHub API client using `gh api graphql`.
+//!
+//! All GitHub communication goes through the `gh` CLI as a subprocess.
+//! This avoids needing an HTTP client dependency and inherits the user's
+//! existing `gh` authentication.
+
+use anyhow::{Context, Result, bail};
 use std::process::Command;
 
 use crate::types::*;
@@ -118,8 +124,8 @@ fn call_gh_graphql(pr: &PrRef, query: &str) -> Result<String> {
     String::from_utf8(output.stdout).context("Invalid UTF-8 from GitHub API")
 }
 
-/// Parse GraphQL response JSON into domain types.
-pub fn parse_pr_response(json: &str) -> Result<PrData> {
+/// Parse and unwrap a GraphQL response to the inner PullRequest node.
+fn unwrap_pr_gql(json: &str) -> Result<PullRequestGql> {
     let response: GraphQLResponse =
         serde_json::from_str(json).context("Failed to parse GitHub GraphQL response")?;
 
@@ -128,11 +134,21 @@ pub fn parse_pr_response(json: &str) -> Result<PrData> {
         bail!("GitHub API errors: {}", msgs.join("; "));
     }
 
-    let data = response.data.context("No data in GitHub response")?;
-    let pr_gql = data
+    response
+        .data
+        .context("No data in GitHub response")?
         .repository
         .pull_request
-        .context("Pull request not found")?;
+        .context("Pull request not found")
+}
+
+fn author_login(author: &Option<AuthorGql>) -> String {
+    author.as_ref().map(|a| a.login.clone()).unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Parse GraphQL response JSON into domain types.
+pub fn parse_pr_response(json: &str) -> Result<PrData> {
+    let pr_gql = unwrap_pr_gql(json)?;
 
     let threads = parse_threads(&pr_gql);
     let (checks, pushed_at) = parse_checks(&pr_gql);
@@ -161,11 +177,7 @@ fn parse_threads(pr: &PullRequestGql) -> Vec<Thread> {
             let first = comments.first()?;
             let first_comment = Comment {
                 id: first.database_id.unwrap_or(0),
-                author: first
-                    .author
-                    .as_ref()
-                    .map(|a| a.login.clone())
-                    .unwrap_or_else(|| "unknown".to_string()),
+                author: author_login(&first.author),
                 path: first.path.clone(),
                 line: first.line,
                 body: first.body.clone(),
@@ -175,21 +187,10 @@ fn parse_threads(pr: &PullRequestGql) -> Vec<Thread> {
             let replies: Vec<Reply> = comments
                 .iter()
                 .skip(1)
-                .map(|c| Reply {
-                    author: c
-                        .author
-                        .as_ref()
-                        .map(|a| a.login.clone())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    body: c.body.clone(),
-                })
+                .map(|c| Reply { author: author_login(&c.author), body: c.body.clone() })
                 .collect();
 
-            Some(Thread {
-                is_resolved: t.is_resolved,
-                first_comment,
-                replies,
-            })
+            Some(Thread { is_resolved: t.is_resolved, first_comment, replies })
         })
         .collect()
 }
@@ -210,21 +211,12 @@ fn parse_checks(pr: &PullRequestGql) -> (Vec<Check>, Option<String>) {
         .nodes
         .iter()
         .map(|ctx| match ctx {
-            CheckContextGql::CheckRun {
-                name,
-                status,
-                conclusion,
-                details_url,
-            } => Check {
+            CheckContextGql::CheckRun { name, status, conclusion, details_url } => Check {
                 name: name.clone(),
                 status: check_run_status(status, conclusion.as_deref()),
                 url: details_url.clone(),
             },
-            CheckContextGql::StatusContext {
-                context,
-                state,
-                target_url,
-            } => Check {
+            CheckContextGql::StatusContext { context, state, target_url } => Check {
                 name: context.clone(),
                 status: status_context_state(state),
                 url: target_url.clone(),
@@ -258,20 +250,7 @@ fn status_context_state(state: &str) -> CheckStatus {
 
 /// Parse a checks-only GraphQL response.
 pub fn parse_checks_response(json: &str) -> Result<(Vec<Check>, Option<String>)> {
-    let response: GraphQLResponse =
-        serde_json::from_str(json).context("Failed to parse GitHub GraphQL response")?;
-
-    if let Some(errors) = response.errors {
-        let msgs: Vec<_> = errors.iter().map(|e| e.message.as_str()).collect();
-        bail!("GitHub API errors: {}", msgs.join("; "));
-    }
-
-    let data = response.data.context("No data in GitHub response")?;
-    let pr_gql = data
-        .repository
-        .pull_request
-        .context("Pull request not found")?;
-
+    let pr_gql = unwrap_pr_gql(json)?;
     Ok(parse_checks(&pr_gql))
 }
 

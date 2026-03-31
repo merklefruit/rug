@@ -1,0 +1,13 @@
+# rug configuration — copy to rug.toml and customize.
+# All fields are optional; defaults shown below.
+
+# Only fix comments from specific authors.
+# Omit to treat all review comments as actionable.
+# review_bots = ["devin-ai[bot]", "cursor[bot]"]
+
+# Seconds to wait after all CI checks settle before
+# running a final status check (gives review bots time to post).
+settle_window = 60
+
+# Max fix-loop iterations before stopping.
+max_loops = 5
