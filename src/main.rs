@@ -3,6 +3,7 @@ mod pr;
 mod config;
 mod state;
 mod github;
+mod verdict;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
