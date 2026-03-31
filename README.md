@@ -20,10 +20,10 @@ For this to work, you will need both the CLI and skill:
 
 ```sh
 # Install CLI (requires gh CLI authenticated)
-cargo install --git https://github.com/merklefruit/review-until-green
+cargo install --git https://github.com/merklefruit/rug
 
 # Install skill
-npx skills add merklefruit/review-until-green
+npx skills add merklefruit/rug
 ```
 
 See [INSTALL.md](./INSTALL.md) for manual install and config options.

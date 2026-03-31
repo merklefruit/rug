@@ -7,7 +7,7 @@ description: Fix PR review comments and CI failures in a loop until green. Requi
 
 Fix PR until verdict=approved. Use `rug` CLI for ALL GitHub state. Never call `gh api` directly.
 
-**Requires:** `rug` on PATH. Install: `cargo install --git https://github.com/merklefruit/review-until-green`
+**Requires:** `rug` on PATH. Install: `cargo install --git https://github.com/merklefruit/rug`
 **Setup:** Ensure `.rug/` is in `.gitignore` (stores local delta-tracking state).
 
 ## Commands

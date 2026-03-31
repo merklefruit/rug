@@ -10,7 +10,7 @@ Two things to install: the `rug` CLI and the `/review-until-green` skill.
 ## 1. Install the CLI
 
 ```bash
-cargo install --git https://github.com/merklefruit/review-until-green
+cargo install --git https://github.com/merklefruit/rug
 ```
 
 Verify: `rug --help`
@@ -20,7 +20,7 @@ Verify: `rug --help`
 ### Via skills.sh (recommended)
 
 ```bash
-npx skills add merklefruit/review-until-green
+npx skills add merklefruit/rug
 ```
 
 ### Manual (curl)
@@ -29,7 +29,7 @@ Global install (all projects):
 
 ```bash
 mkdir -p ~/.claude/skills
-curl -fsSL https://raw.githubusercontent.com/merklefruit/review-until-green/main/skills/review-until-green/SKILL.md \
+curl -fsSL https://raw.githubusercontent.com/merklefruit/rug/main/skills/review-until-green/SKILL.md \
   -o ~/.claude/skills/review-until-green.md
 ```
 
@@ -37,7 +37,7 @@ Project-level (current repo only):
 
 ```bash
 mkdir -p .claude/skills
-curl -fsSL https://raw.githubusercontent.com/merklefruit/review-until-green/main/skills/review-until-green/SKILL.md \
+curl -fsSL https://raw.githubusercontent.com/merklefruit/rug/main/skills/review-until-green/SKILL.md \
   -o .claude/skills/review-until-green.md
 ```
 
@@ -59,7 +59,7 @@ echo '.rug/' >> .gitignore
 Download the example config:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/merklefruit/review-until-green/main/rug.example.toml \
+curl -fsSL https://raw.githubusercontent.com/merklefruit/rug/main/rug.example.toml \
   -o rug.toml
 ```
 
