@@ -7,13 +7,12 @@ Agent skill and CLI for **token-efficient** GitHub PR review loops: your agent g
 Use this after AI reviewers have left a pile of small comments—not instead of human review at the end.
 
 ```mermaid
-%%{init: {'flowchart': {'nodeSpacing': 28, 'rankSpacing': 32}}}%%
 flowchart TB
-    A([You commit your work]) --> B[AI tools review it (Claude, Greptile, Devin, CodeRabbit, Cursor, …)]
-    B --> C[Your PR littered with constant rounds of comments—trivial to fix on frontier models]
+    A([You commit your work]) --> B["AI tools review it (Claude, Greptile, Devin, CodeRabbit, Cursor, ...)"]
+    B --> C["Your PR littered with constant rounds of comments—trivial to fix on frontier models"]
     C --> D([You summon /review-until-green])
-    D --> E{Every AI comment addressed?}
-    E -->|no| L[Fix, push, poll CI & reviews]
+    D --> E{"Every AI comment addressed?"}
+    E -->|no| L["Fix, push, poll CI & reviews"]
     L --> E
     E -->|yes| F([Manual pass on what changed, then human team review])
 ```
