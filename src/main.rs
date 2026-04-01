@@ -97,6 +97,14 @@ fn cmd_watch(pr_ref: &PrRef, timeout_secs: u64, settle_override: Option<u64>) ->
     let poll_interval = Duration::from_secs(20);
     let start = Instant::now();
 
+    // Check if there are already actionable comments — return immediately if so
+    let initial = build_status_output(pr_ref)?;
+    if !initial.new_comments.is_empty() {
+        eprintln!("{} unresolved comment(s) already present, returning immediately", initial.new_comments.len());
+        println!("{}", serde_json::to_string_pretty(&initial)?);
+        return Ok(());
+    }
+
     // Poll until all checks settle
     loop {
         if start.elapsed() > timeout {
@@ -119,7 +127,6 @@ fn cmd_watch(pr_ref: &PrRef, timeout_secs: u64, settle_override: Option<u64>) ->
             break;
         }
 
-        // Check timeout before sleeping
         if start.elapsed() + poll_interval > timeout {
             bail!("Timed out after {}s waiting for checks to settle", timeout_secs);
         }
