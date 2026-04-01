@@ -9,7 +9,7 @@ use std::process::Command;
 use crate::types::PrRef;
 
 /// Parse a PR reference from various formats:
-/// - https://github.com/owner/repo/pull/123
+/// - <https://github.com/owner/repo/pull/123>
 /// - owner/repo#123
 pub fn parse_pr_ref(input: &str) -> Result<PrRef> {
     if let Some(pr) = parse_url(input) {

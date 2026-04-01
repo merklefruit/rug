@@ -14,13 +14,13 @@ Fix PR until verdict=approved. Use `rug` CLI for ALL GitHub state. Never call `g
 
 PR ref is an optional positional arg BEFORE the subcommand. Omit = current branch.
 
-| Command                            | Purpose                                          |
-| ---------------------------------- | ------------------------------------------------ |
-| `rug [pr] status`                  | JSON: verdict, new_comments, ci, summary         |
+| Command                            | Purpose                                           |
+| ---------------------------------- | ------------------------------------------------- |
+| `rug [pr] status`                  | JSON: verdict, new_comments, ci, summary          |
 | `rug [pr] checks`                  | JSON: ci status only (lightweight poll)           |
 | `rug [pr] watch`                   | Block until checks settle, then print full status |
-| `rug [pr] mark-addressed <ids...>` | Mark comment IDs as fixed locally                |
-| `rug [pr] reset`                   | Clear local addressed state                      |
+| `rug [pr] mark-addressed <ids...>` | Mark comment IDs as fixed locally                 |
+| `rug [pr] reset`                   | Clear local addressed state                       |
 
 ## Loop (max 5 iterations)
 

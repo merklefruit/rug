@@ -1,3 +1,8 @@
+#![doc = include_str!("../CRATE_DOCS.md")]
+#![forbid(unsafe_code)]
+#![warn(rust_2018_idioms)]
+#![warn(rustdoc::broken_intra_doc_links)]
+
 mod config;
 mod github;
 mod pr;
