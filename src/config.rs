@@ -9,9 +9,8 @@ use std::path::Path;
 pub struct Config {
     /// Only process comments from these authors. `None` means all comments are actionable.
     pub review_bots: Option<Vec<String>>,
-    /// Seconds to wait after all checks settle before final status check (used by the skill).
+    /// Seconds to wait after all checks settle before final status check.
     #[serde(default = "default_settle_window")]
-    #[allow(dead_code)]
     pub settle_window: u64,
     /// Max fix loops before the skill should stop (used by the skill).
     #[serde(default = "default_max_loops")]

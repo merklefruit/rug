@@ -61,6 +61,7 @@ The skill uses `rug` for all GitHub state:
 ```
 rug [pr] status          → verdict + new comments + CI (delta only)
 rug [pr] checks          → CI status (lightweight poll)
+rug [pr] watch           → block until checks settle, then print status
 rug [pr] mark-addressed  → track fixed comment IDs locally
 rug [pr] reset           → clear local state
 ```
