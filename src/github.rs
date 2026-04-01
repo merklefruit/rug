@@ -68,6 +68,9 @@ const CHECKS_QUERY: &str = r#"
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      number
+      state
+      headRefOid
       commits(last: 1) {
         nodes {
           commit {
