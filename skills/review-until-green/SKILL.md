@@ -14,23 +14,24 @@ Fix PR until verdict=approved. Use `rug` CLI for ALL GitHub state. Never call `g
 
 PR ref is an optional positional arg BEFORE the subcommand. Omit = current branch.
 
-| Command                            | Purpose                                  |
-| ---------------------------------- | ---------------------------------------- |
-| `rug [pr] status`                  | JSON: verdict, new_comments, ci, summary |
-| `rug [pr] checks`                  | JSON: ci status only (lightweight poll)  |
-| `rug [pr] mark-addressed <ids...>` | Mark comment IDs as fixed locally        |
-| `rug [pr] reset`                   | Clear local addressed state              |
+| Command                            | Purpose                                          |
+| ---------------------------------- | ------------------------------------------------ |
+| `rug [pr] status`                  | JSON: verdict, new_comments, ci, summary         |
+| `rug [pr] checks`                  | JSON: ci status only (lightweight poll)           |
+| `rug [pr] watch`                   | Block until checks settle, then print full status |
+| `rug [pr] mark-addressed <ids...>` | Mark comment IDs as fixed locally                |
+| `rug [pr] reset`                   | Clear local addressed state                      |
 
 ## Loop (max 5 iterations)
 
 ```
 START:
-  run `rug [pr] status`
+  run `rug [pr] watch`        # blocks until CI + review bots settle
+  parse JSON output (same schema as `rug status`)
 
   verdict=approved  → DONE (summarize, stop)
   verdict=merged    → DONE (tell user, stop)
   verdict=closed    → DONE (tell user, stop)
-  verdict=pending   → POLL
   verdict=changes_requested → FIX_COMMENTS
   verdict=ci_failing → FIX_CI
 
@@ -41,19 +42,13 @@ FIX_COMMENTS:
     fix it
   git add + commit + push
   run `rug [pr] mark-addressed <id1> <id2> ...`
-  → POLL
+  → START
 
 FIX_CI:
   inspect failing checks from ci.checks (use URLs)
   fix issues
   git add + commit + push
-  → POLL
-
-POLL:
-  sleep 30s
-  run `rug [pr] checks`
-  if all_settled=false → sleep 30s, repeat POLL
-  if all_settled=true  → sleep 60s (settle window), → START
+  → START
 ```
 
 ## Rules

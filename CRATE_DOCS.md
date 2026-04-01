@@ -12,6 +12,8 @@ PR is an optional positional arg before the subcommand. Omit it to use the curre
 rug status                                         # current branch
 rug https://github.com/owner/repo/pull/123 status  # explicit URL
 rug owner/repo#123 checks                          # short ref
+rug watch                                          # block until checks settle, print status
+rug watch --timeout 300 --settle 30                # custom timeout and settle window
 rug mark-addressed 1001 1002                       # mark comment IDs as addressed
 rug reset                                          # clear local addressed state
 ```
