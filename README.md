@@ -1,22 +1,42 @@
-# Review Until Green
+# `rug` - Review Until Green
 
-Automate the PR review-fix loop. 
+Agent skill and CLI for **token-efficient** GitHub PR review loops: your agent gets compact, delta-tracked state from `rug` instead of re-fetching the full PR picture every time.
 
-A CLI (`rug`) feeds compact, delta-tracked review state to a Claude Code skill that fixes issues, pushes, and repeats until the PR is green.
+## The flow
 
-## The problem
+Use this after AI reviewers have left a pile of small comments—not instead of human review at the end.
 
-When you ask a coding agent to "fix this PR until it's approved," it spends most of its tokens re-discovering PR state from the GitHub API on every iteration. Review comments, CI status, what's already been addressed... the agent fetches and parses all of it from scratch each loop.
+```mermaid
+%%{init: {'flowchart': {'nodeSpacing': 28, 'rankSpacing': 32}}}%%
+flowchart TB
+    A([You commit your work]) --> B[AI tools review it (Claude, Greptile, Devin, CodeRabbit, Cursor, …)]
+    B --> C[Your PR littered with constant rounds of comments—trivial to fix on frontier models]
+    C --> D([You summon /review-until-green])
+    D --> E{Every AI comment addressed?}
+    E -->|no| L[Fix, push, poll CI & reviews]
+    L --> E
+    E -->|yes| F([Manual pass on what changed, then human team review])
+```
 
-## The solution
+## Why tokens balloon
 
-**`rug` CLI**: fetches PR review comments and CI status from GitHub, returns compact JSON, and tracks what's been addressed locally. Each call returns only the delta, i.e. new comments the agent hasn't seen yet. Token usage stays flat across loops instead of growing with PR history.
+When you ask an agent to “fix this PR until it’s green,” **each iteration** usually re-pulls review threads, CI, and “what’s left” from the GitHub API and re-parses all of it. That work compounds every loop.
 
-**`/review-until-green` skill**: orchestrates the fix loop. Calls `rug` for all GitHub state, fixes the issues, pushes, marks comments as addressed, polls for CI and new reviews, and repeats until the verdict is `approved` (best-effort).
+## What you get
 
-## Setup
+**`rug` CLI** — Talks to GitHub (via `gh`), returns **compact JSON**, and keeps **local** “already addressed” state so each call can return **only new** comments. Token cost stays flatter as the PR grows.
 
-For this to work, you will need both the CLI and skill:
+**`/review-until-green` skill** — Drives the loop: call `rug` for state, apply fixes, push, mark addressed, poll CI/reviews, repeat until the verdict is `approved` (best-effort). It does **not** call GitHub’s API itself—only `rug`.
+
+## Setup (for your agent)
+
+```md
+Install the skill at https://github.com/merklefruit/rug/blob/main/INSTALL.md and explain how to use it
+```
+
+## Setup (manual)
+
+You need both the CLI and the skill:
 
 ```sh
 # Install CLI (requires gh CLI authenticated)
@@ -35,11 +55,9 @@ See [INSTALL.md](./INSTALL.md) for manual install and config options.
 /review-until-green https://github.com/owner/repo/pull/123
 ```
 
-The skill loops automatically: fetch status, fix comments/CI, push, poll, repeat.
+## CLI commands
 
-## How it works
-
-The skill calls `rug` for all GitHub state — never the API directly.
+The skill uses `rug` for all GitHub state:
 
 ```
 rug [pr] status          → verdict + new comments + CI (delta only)
@@ -54,7 +72,7 @@ Omit `[pr]` to use the current branch. Accepts URLs or `owner/repo#123`.
 
 Optional `rug.toml` in repo root — see [rug.example.toml](./rug.example.toml).
 
-Works with any bot that posts PR review comments: Devin, Cursor, CodeRabbit, human reviewers, etc.
+Works with any bot or person that posts PR review comments (same idea as the tools listed in the diagram).
 
 ## Docs
 
