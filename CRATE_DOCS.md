@@ -15,8 +15,16 @@ rug owner/repo#123 checks                          # short ref
 rug watch                                          # block until checks settle, print status
 rug watch --timeout 300 --settle 30                # custom timeout and settle window
 rug mark-addressed 1001 1002                       # mark comment IDs as addressed
+rug request-copilot-review                         # re-request a GitHub Copilot review
 rug reset                                          # clear local addressed state
 ```
+
+`status` and `watch` also report `reviews` — each reviewer's latest overall
+review as `{ author, state, stale }`, where `stale` is true when the review
+predates the current HEAD — plus `requested_reviewers` (pending review requests).
+`request-copilot-review` re-requests a Copilot review via `gh pr edit
+--add-reviewer @copilot` (the REST `requested_reviewers` endpoint does not accept
+Copilot); it needs a `gh` version that supports `@copilot` as a reviewer.
 
 ## Configuration
 
@@ -48,5 +56,6 @@ src/
   verdict.rs   Verdict computation + comment filtering
 ```
 
-All GitHub API calls go through `gh api graphql` as a subprocess: no HTTP client dependency. 
+All GitHub reads go through `gh api graphql` as a subprocess: no HTTP client dependency.
+The one write action, `request-copilot-review`, shells out to `gh pr edit --add-reviewer @copilot`.
 Auth is inherited from the user's `gh` session or `GITHUB_TOKEN` env var.

@@ -88,6 +88,20 @@ pub fn compute(
     (verdict, new_comments, summary)
 }
 
+/// Build review outputs, flagging each review as stale when it was submitted
+/// against a commit other than the current HEAD (i.e. the reviewer has not seen
+/// the latest push).
+pub fn build_reviews_output(reviews: &[Review], head_sha: &str) -> Vec<ReviewOutput> {
+    reviews
+        .iter()
+        .map(|r| ReviewOutput {
+            author: r.author.clone(),
+            state: r.state.as_str().to_string(),
+            stale: r.commit_oid.as_deref() != Some(head_sha),
+        })
+        .collect()
+}
+
 /// Build CiOutput from checks.
 pub fn build_ci_output(checks: &[Check]) -> CiOutput {
     let (all_settled, any_failing) = checks.iter().fold((true, false), |(settled, failing), c| {
@@ -150,6 +164,8 @@ mod tests {
             head_sha: "abc".to_string(),
             threads: vec![make_thread(1, "bot", true)], // resolved
             checks: vec![make_check("ci", CheckStatus::Success)],
+            reviews: vec![],
+            requested_reviewers: vec![],
             pushed_at: None,
         };
         let (verdict, comments, summary) = compute(&data, &State::default(), &Config::default());
@@ -167,6 +183,8 @@ mod tests {
             head_sha: "abc".to_string(),
             threads: vec![make_thread(1, "bot", false)],
             checks: vec![make_check("ci", CheckStatus::Success)],
+            reviews: vec![],
+            requested_reviewers: vec![],
             pushed_at: None,
         };
         let (verdict, comments, summary) = compute(&data, &State::default(), &Config::default());
@@ -185,6 +203,8 @@ mod tests {
             head_sha: "abc".to_string(),
             threads: vec![],
             checks: vec![make_check("ci", CheckStatus::Failure)],
+            reviews: vec![],
+            requested_reviewers: vec![],
             pushed_at: None,
         };
         let (verdict, _, _) = compute(&data, &State::default(), &Config::default());
@@ -200,6 +220,8 @@ mod tests {
             head_sha: "abc".to_string(),
             threads: vec![],
             checks: vec![make_check("ci", CheckStatus::InProgress)],
+            reviews: vec![],
+            requested_reviewers: vec![],
             pushed_at: None,
         };
         let (verdict, _, _) = compute(&data, &State::default(), &Config::default());
@@ -215,6 +237,8 @@ mod tests {
             head_sha: "abc".to_string(),
             threads: vec![make_thread(1, "bot", false)],
             checks: vec![],
+            reviews: vec![],
+            requested_reviewers: vec![],
             pushed_at: None,
         };
         let (verdict, _, _) = compute(&data, &State::default(), &Config::default());
@@ -234,6 +258,8 @@ mod tests {
                 make_thread(3, "bot", false),
             ],
             checks: vec![make_check("ci", CheckStatus::Success)],
+            reviews: vec![],
+            requested_reviewers: vec![],
             pushed_at: None,
         };
         let mut state = State::default();
@@ -257,6 +283,8 @@ mod tests {
             head_sha: "abc".to_string(),
             threads: vec![make_thread(1, "bot", false)],
             checks: vec![make_check("ci", CheckStatus::Success)],
+            reviews: vec![],
+            requested_reviewers: vec![],
             pushed_at: None,
         };
         let mut state = State::default();
@@ -279,6 +307,8 @@ mod tests {
                 make_thread(2, "human-reviewer", false),
             ],
             checks: vec![make_check("ci", CheckStatus::Success)],
+            reviews: vec![],
+            requested_reviewers: vec![],
             pushed_at: None,
         };
         let config =
@@ -309,5 +339,35 @@ mod tests {
         let ci = build_ci_output(&checks);
         assert_eq!(ci.status, "pending");
         assert!(!ci.all_settled);
+    }
+
+    fn make_review(author: &str, state: ReviewState, commit_oid: Option<&str>) -> Review {
+        Review { author: author.to_string(), state, commit_oid: commit_oid.map(String::from) }
+    }
+
+    #[test]
+    fn test_reviews_output_stale_detection() {
+        let reviews = vec![
+            // Reviewed the current HEAD — fresh.
+            make_review("copilot-pull-request-reviewer", ReviewState::Commented, Some("head")),
+            // Reviewed an older commit — stale.
+            make_review("human", ReviewState::Approved, Some("old")),
+            // Unknown commit — treated as stale.
+            make_review("ghost", ReviewState::Commented, None),
+        ];
+        let out = build_reviews_output(&reviews, "head");
+
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].author, "copilot-pull-request-reviewer");
+        assert_eq!(out[0].state, "commented");
+        assert!(!out[0].stale);
+        assert_eq!(out[1].state, "approved");
+        assert!(out[1].stale);
+        assert!(out[2].stale);
+    }
+
+    #[test]
+    fn test_reviews_output_empty() {
+        assert!(build_reviews_output(&[], "head").is_empty());
     }
 }
