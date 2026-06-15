@@ -33,6 +33,23 @@ query($owner: String!, $name: String!, $number: Int!) {
           }
         }
       }
+      latestReviews(first: 100) {
+        nodes {
+          author { login }
+          state
+          commit { oid }
+        }
+      }
+      reviewRequests(first: 100) {
+        nodes {
+          requestedReviewer {
+            __typename
+            ... on Bot { login }
+            ... on User { login }
+            ... on Mannequin { login }
+          }
+        }
+      }
       commits(last: 1) {
         nodes {
           commit {
@@ -154,6 +171,8 @@ pub fn parse_pr_response(json: &str) -> Result<PrData> {
     let pr_gql = unwrap_pr_gql(json)?;
 
     let threads = parse_threads(&pr_gql);
+    let reviews = parse_reviews(&pr_gql);
+    let requested_reviewers = parse_requested_reviewers(&pr_gql);
     let (checks, pushed_at) = parse_checks(&pr_gql);
 
     Ok(PrData {
@@ -163,8 +182,38 @@ pub fn parse_pr_response(json: &str) -> Result<PrData> {
         head_sha: pr_gql.head_ref_oid,
         threads,
         checks,
+        reviews,
+        requested_reviewers,
         pushed_at,
     })
+}
+
+fn parse_reviews(pr: &PullRequestGql) -> Vec<Review> {
+    let Some(reviews) = &pr.latest_reviews else {
+        return vec![];
+    };
+
+    reviews
+        .nodes
+        .iter()
+        .map(|r| Review {
+            author: author_login(&r.author),
+            state: ReviewState::from_gql(&r.state),
+            commit_oid: r.commit.as_ref().map(|c| c.oid.clone()),
+        })
+        .collect()
+}
+
+fn parse_requested_reviewers(pr: &PullRequestGql) -> Vec<String> {
+    let Some(requests) = &pr.review_requests else {
+        return vec![];
+    };
+
+    requests
+        .nodes
+        .iter()
+        .filter_map(|n| n.requested_reviewer.as_ref().and_then(|r| r.login.clone()))
+        .collect()
 }
 
 fn parse_threads(pr: &PullRequestGql) -> Vec<Thread> {
@@ -272,6 +321,38 @@ pub fn fetch_checks(pr: &PrRef) -> Result<(Vec<Check>, Option<String>)> {
     parse_checks_response(&json)
 }
 
+/// Re-request a code review from GitHub Copilot on the given PR.
+///
+/// Uses `gh pr edit --add-reviewer @copilot`, the documented mechanism for
+/// requesting a Copilot review. The REST `requested_reviewers` endpoint does
+/// not accept Copilot, so this cannot go through `gh api`. Requires a `gh`
+/// version that supports `@copilot` as a reviewer (March 2026 or later).
+pub fn request_copilot_review(pr: &PrRef) -> Result<()> {
+    let output = Command::new("gh")
+        .args([
+            "pr",
+            "edit",
+            &pr.number.to_string(),
+            "--repo",
+            &format!("{}/{}", pr.owner, pr.repo),
+            "--add-reviewer",
+            "@copilot",
+        ])
+        .output()
+        .context("Failed to run `gh pr edit`. Is gh CLI installed and authenticated?")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "Failed to request Copilot review: {stderr}\n\
+             Ensure Copilot code review is enabled for the repo and that `gh` is recent \
+             enough to support `--add-reviewer @copilot` (gh 2.x, March 2026+)."
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +409,41 @@ mod tests {
                     "createdAt": "2026-03-31T09:00:00Z"
                   }
                 ]
+              }
+            }
+          ]
+        },
+        "latestReviews": {
+          "nodes": [
+            {
+              "author": { "login": "copilot-pull-request-reviewer" },
+              "state": "COMMENTED",
+              "commit": { "oid": "oldsha111" }
+            },
+            {
+              "author": { "login": "human-reviewer" },
+              "state": "APPROVED",
+              "commit": { "oid": "abc123def" }
+            }
+          ]
+        },
+        "reviewRequests": {
+          "nodes": [
+            {
+              "requestedReviewer": {
+                "__typename": "Bot",
+                "login": "copilot-pull-request-reviewer"
+              }
+            },
+            {
+              "requestedReviewer": {
+                "__typename": "User",
+                "login": "alice"
+              }
+            },
+            {
+              "requestedReviewer": {
+                "__typename": "Team"
               }
             }
           ]
@@ -417,6 +533,27 @@ mod tests {
     fn test_parse_pushed_at() {
         let data = parse_pr_response(fixture_full_response()).unwrap();
         assert_eq!(data.pushed_at.as_deref(), Some("2026-03-31T09:30:00Z"));
+    }
+
+    #[test]
+    fn test_parse_reviews() {
+        let data = parse_pr_response(fixture_full_response()).unwrap();
+        assert_eq!(data.reviews.len(), 2);
+
+        assert_eq!(data.reviews[0].author, "copilot-pull-request-reviewer");
+        assert_eq!(data.reviews[0].state, ReviewState::Commented);
+        assert_eq!(data.reviews[0].commit_oid.as_deref(), Some("oldsha111"));
+
+        assert_eq!(data.reviews[1].author, "human-reviewer");
+        assert_eq!(data.reviews[1].state, ReviewState::Approved);
+        assert_eq!(data.reviews[1].commit_oid.as_deref(), Some("abc123def"));
+    }
+
+    #[test]
+    fn test_parse_requested_reviewers() {
+        let data = parse_pr_response(fixture_full_response()).unwrap();
+        // Bot and User logins are captured; the Team request (no login) is skipped.
+        assert_eq!(data.requested_reviewers, vec!["copilot-pull-request-reviewer", "alice"]);
     }
 
     #[test]

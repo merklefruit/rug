@@ -52,6 +52,10 @@ pub struct PullRequestGql {
     pub head_ref_oid: String,
     #[serde(rename = "reviewThreads")]
     pub review_threads: Option<Connection<ReviewThreadGql>>,
+    #[serde(rename = "latestReviews")]
+    pub latest_reviews: Option<Connection<ReviewGql>>,
+    #[serde(rename = "reviewRequests")]
+    pub review_requests: Option<Connection<ReviewRequestGql>>,
     pub commits: Connection<CommitNodeGql>,
 }
 
@@ -93,6 +97,42 @@ pub struct ReviewCommentGql {
 #[derive(Deserialize)]
 pub struct AuthorGql {
     pub login: String,
+}
+
+/// An overall pull request review (the verdict a reviewer submits, distinct
+/// from the inline comments inside a review thread).
+#[allow(dead_code)]
+#[derive(Deserialize)]
+pub struct ReviewGql {
+    pub author: Option<AuthorGql>,
+    pub state: String,
+    pub commit: Option<ReviewCommitGql>,
+}
+
+/// The commit a review was submitted against. Used to tell whether a review
+/// covers the current HEAD or predates it.
+#[allow(dead_code)]
+#[derive(Deserialize)]
+pub struct ReviewCommitGql {
+    pub oid: String,
+}
+
+/// A pending review request on a pull request.
+#[allow(dead_code)]
+#[derive(Deserialize)]
+pub struct ReviewRequestGql {
+    #[serde(rename = "requestedReviewer")]
+    pub requested_reviewer: Option<RequestedReviewerGql>,
+}
+
+/// The reviewer named in a review request. Only `login` is captured; it is
+/// present for User/Bot/Mannequin reviewers and absent for Team requests
+/// (which are skipped). The GraphQL inline fragments merge `login` into this
+/// flat object, so no `__typename` dispatch is needed here.
+#[allow(dead_code)]
+#[derive(Deserialize)]
+pub struct RequestedReviewerGql {
+    pub login: Option<String>,
 }
 
 /// Commit node wrapper from the GraphQL response.
@@ -175,6 +215,10 @@ pub struct PrData {
     pub threads: Vec<Thread>,
     /// CI check runs and status contexts.
     pub checks: Vec<Check>,
+    /// Latest overall review submitted by each reviewer (e.g. Copilot, humans).
+    pub reviews: Vec<Review>,
+    /// Logins whose review is currently requested but not yet submitted (pending).
+    pub requested_reviewers: Vec<String>,
     /// When the HEAD commit was pushed (ISO 8601). Reserved for future use.
     #[allow(dead_code)]
     pub pushed_at: Option<String>,
@@ -245,6 +289,53 @@ pub struct Reply {
     pub author: String,
     /// Reply body text.
     pub body: String,
+}
+
+/// A reviewer's latest overall review on the PR.
+#[derive(Debug, Clone)]
+pub struct Review {
+    /// Reviewer's GitHub login.
+    pub author: String,
+    /// Overall state of the review.
+    pub state: ReviewState,
+    /// SHA of the commit this review was submitted against, if known.
+    /// Compared against the PR's HEAD to detect stale reviews.
+    pub commit_oid: Option<String>,
+}
+
+/// The overall state of a pull request review.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
+}
+
+impl ReviewState {
+    /// Convert from a GitHub GraphQL `PullRequestReviewState` value.
+    pub fn from_gql(s: &str) -> Self {
+        match s {
+            "APPROVED" => Self::Approved,
+            "CHANGES_REQUESTED" => Self::ChangesRequested,
+            "DISMISSED" => Self::Dismissed,
+            "PENDING" => Self::Pending,
+            // COMMENTED, and any unrecognized future state, map to Commented.
+            _ => Self::Commented,
+        }
+    }
+
+    /// Returns the lowercase string representation for JSON output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::ChangesRequested => "changes_requested",
+            Self::Commented => "commented",
+            Self::Dismissed => "dismissed",
+            Self::Pending => "pending",
+        }
+    }
 }
 
 /// A CI check run or commit status context.
@@ -332,6 +423,12 @@ pub struct StatusOutput {
     pub ci: CiOutput,
     /// Review comments not yet addressed.
     pub new_comments: Vec<CommentOutput>,
+    /// Latest overall review per reviewer (e.g. Copilot, humans). Omitted when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reviews: Vec<ReviewOutput>,
+    /// Logins with a currently-requested (pending) review. Omitted when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requested_reviewers: Vec<String>,
     /// Summary counts.
     pub summary: SummaryOutput,
 }
@@ -388,6 +485,18 @@ pub struct CommentOutput {
 pub struct ReplyOutput {
     pub author: String,
     pub body: String,
+}
+
+/// A reviewer's latest overall review in JSON output.
+#[derive(Serialize)]
+pub struct ReviewOutput {
+    /// Reviewer's GitHub login.
+    pub author: String,
+    /// Review state: "approved", "changes_requested", "commented", "dismissed", or "pending".
+    pub state: String,
+    /// True if the review predates the current HEAD — i.e. the reviewer has not
+    /// seen the latest push and a re-review may be warranted.
+    pub stale: bool,
 }
 
 /// Comment count summary in JSON output.

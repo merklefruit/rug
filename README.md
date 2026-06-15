@@ -25,7 +25,7 @@ When you ask an agent to “fix this PR until it’s green,” **each iteration*
 
 **`rug` CLI** — Talks to GitHub (via `gh`), returns **compact JSON**, and keeps **local** “already addressed” state so each call can return **only new** comments. Token cost stays flatter as the PR grows.
 
-**`/review-until-green` skill** — Drives the loop: call `rug` for state, apply fixes, push, mark addressed, poll CI/reviews, repeat until the verdict is `approved` (best-effort). It does **not** call GitHub’s API itself—only `rug`.
+**`/review-until-green` skill** — Drives the loop: call `rug` for state, apply fixes, push, mark addressed, poll CI/reviews, repeat until the verdict is `approved` (best-effort). When GitHub Copilot is a reviewer and its last review predates your latest push, the skill re-requests a Copilot review so it sees the final code before stopping. It does **not** call GitHub’s API itself—only `rug`.
 
 ## Setup (for your agent)
 
@@ -59,11 +59,12 @@ See [INSTALL.md](./INSTALL.md) for manual install and config options.
 The skill uses `rug` for all GitHub state:
 
 ```
-rug [pr] status          → verdict + new comments + CI (delta only)
-rug [pr] checks          → CI status (lightweight poll)
-rug [pr] watch           → block until checks settle, then print status
-rug [pr] mark-addressed  → track fixed comment IDs locally
-rug [pr] reset           → clear local state
+rug [pr] status                 → verdict + new comments + CI + reviews (delta only)
+rug [pr] checks                 → CI status (lightweight poll)
+rug [pr] watch                  → block until checks settle, then print status
+rug [pr] mark-addressed         → track fixed comment IDs locally
+rug [pr] request-copilot-review → re-request a GitHub Copilot review
+rug [pr] reset                  → clear local state
 ```
 
 Omit `[pr]` to use the current branch. Accepts URLs or `owner/repo#123`.

@@ -50,6 +50,8 @@ enum Commands {
         #[arg(required = true)]
         ids: Vec<u64>,
     },
+    /// Re-request a code review from GitHub Copilot
+    RequestCopilotReview,
     /// Clear local state for a PR
     Reset,
 }
@@ -68,6 +70,7 @@ fn build_status_output(pr_ref: &PrRef) -> Result<StatusOutput> {
 
     let (verdict_val, new_comments, summary) = verdict::compute(&data, &st, &config);
     let ci = verdict::build_ci_output(&data.checks);
+    let reviews = verdict::build_reviews_output(&data.reviews, &data.head_sha);
 
     Ok(StatusOutput {
         pr: PrInfoOutput {
@@ -79,6 +82,8 @@ fn build_status_output(pr_ref: &PrRef) -> Result<StatusOutput> {
         verdict: verdict_val.as_str().to_string(),
         ci,
         new_comments,
+        reviews,
+        requested_reviewers: data.requested_reviewers,
         summary,
     })
 }
@@ -157,6 +162,17 @@ fn cmd_mark_addressed(pr_ref: &PrRef, ids: &[u64]) -> Result<()> {
     Ok(())
 }
 
+fn cmd_request_copilot_review(pr_ref: &PrRef) -> Result<()> {
+    github::request_copilot_review(pr_ref)?;
+    eprintln!("Requested Copilot review on PR #{}.", pr_ref.number);
+    let output = serde_json::json!({
+        "requested_reviewer": "copilot",
+        "pr": pr_ref.number,
+    });
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
 fn cmd_reset(pr_ref: &PrRef) -> Result<()> {
     let rug_dir = state::rug_dir()?;
     State::delete(&rug_dir, &pr_ref.state_key())?;
@@ -174,6 +190,7 @@ fn main() -> Result<()> {
         Commands::Checks => cmd_checks(&pr_ref),
         Commands::Watch { timeout, settle } => cmd_watch(&pr_ref, timeout, settle),
         Commands::MarkAddressed { ids } => cmd_mark_addressed(&pr_ref, &ids),
+        Commands::RequestCopilotReview => cmd_request_copilot_review(&pr_ref),
         Commands::Reset => cmd_reset(&pr_ref),
     }
 }
