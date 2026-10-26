@@ -31,8 +31,9 @@ Copilot); it needs a `gh` version that supports `@copilot` as a reviewer.
 Optional `rug.toml` in the repo root. See [rug.example.toml](./rug.example.toml).
 
 ```toml
-# Only fix comments from specific authors (default: all)
-# review_bots = ["devin-ai[bot]"]
+# Only fix comments from specific authors (default: all).
+# Logins match case-insensitively, with or without the `[bot]` suffix.
+# review_bots = ["coderabbitai[bot]"]
 
 # Seconds to wait after checks settle (default: 60)
 settle_window = 60

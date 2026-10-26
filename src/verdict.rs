@@ -5,6 +5,16 @@
 
 use crate::{config::Config, state::State, types::*};
 
+/// Whether two GitHub logins name the same account. Logins are case-insensitive, and the GraphQL
+/// API reports bots without the `[bot]` suffix that REST and the web UI show (`coderabbitai` vs
+/// `coderabbitai[bot]`), so either form matches.
+fn same_login(a: &str, b: &str) -> bool {
+    fn base(login: &str) -> &str {
+        login.strip_suffix("[bot]").unwrap_or(login)
+    }
+    base(a).eq_ignore_ascii_case(base(b))
+}
+
 /// Filter threads to only unresolved ones, optionally filtered by review_bots config.
 fn relevant_threads<'a>(threads: &'a [Thread], config: &Config) -> Vec<&'a Thread> {
     threads
@@ -13,7 +23,7 @@ fn relevant_threads<'a>(threads: &'a [Thread], config: &Config) -> Vec<&'a Threa
         .filter(|t| {
             match &config.review_bots {
                 None => true, // All comments are actionable
-                Some(bots) => bots.iter().any(|b| b == &t.first_comment.author),
+                Some(bots) => bots.iter().any(|b| same_login(b, &t.first_comment.author)),
             }
         })
         .collect()
@@ -317,6 +327,42 @@ mod tests {
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].author, "devin-ai[bot]");
         assert_eq!(summary.total_unresolved, 1);
+    }
+
+    #[test]
+    fn test_review_bots_filter_matches_graphql_bot_logins() {
+        // GraphQL reports bot authors without the `[bot]` suffix that GitHub's UI shows.
+        let data = PrData {
+            number: 1,
+            repo: "owner/repo".to_string(),
+            state: PrState::Open,
+            head_sha: "abc".to_string(),
+            threads: vec![
+                make_thread(1, "coderabbitai", false),
+                make_thread(2, "cursor", false),
+                make_thread(3, "human-reviewer", false),
+            ],
+            checks: vec![make_check("ci", CheckStatus::Success)],
+            reviews: vec![],
+            requested_reviewers: vec![],
+            pushed_at: None,
+        };
+        let config = Config {
+            review_bots: Some(vec!["coderabbitai[bot]".to_string(), "Cursor".to_string()]),
+            ..Config::default()
+        };
+        let (_, comments, _) = compute(&data, &State::default(), &config);
+        let ids: Vec<_> = comments.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_same_login() {
+        assert!(same_login("coderabbitai", "coderabbitai[bot]"));
+        assert!(same_login("CodeRabbitAI[bot]", "coderabbitai"));
+        assert!(same_login("alice", "Alice"));
+        assert!(!same_login("coderabbitai", "coderabbit"));
+        assert!(!same_login("alice[bot]x", "alice"));
     }
 
     #[test]

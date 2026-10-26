@@ -3,7 +3,8 @@
 
 # Only fix comments from specific authors.
 # Omit to treat all review comments as actionable.
-# review_bots = ["devin-ai[bot]", "cursor[bot]"]
+# Logins match case-insensitively, with or without the `[bot]` suffix.
+# review_bots = ["coderabbitai[bot]", "cursor[bot]"]
 
 # Seconds to wait after all CI checks settle before
 # running a final status check (gives review bots time to post).
