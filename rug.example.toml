@@ -4,6 +4,7 @@
 # Only fix comments from specific authors.
 # Omit to treat all review comments as actionable.
 # Logins match case-insensitively, with or without the `[bot]` suffix.
+# Leaving CodeRabbit out also stops rug asking it to re-review.
 # review_bots = ["coderabbitai[bot]", "cursor[bot]"]
 
 # Seconds to wait after all CI checks settle before

@@ -52,6 +52,15 @@ enum Commands {
     },
     /// Re-request a code review from GitHub Copilot
     RequestCopilotReview,
+    /// Ask CodeRabbit to review the latest push (posts `@coderabbitai review`)
+    RequestCoderabbitReview {
+        /// Review the whole PR from scratch (`@coderabbitai full review`)
+        #[arg(long)]
+        full: bool,
+        /// Post the request even if one was already made for the current HEAD
+        #[arg(long)]
+        force: bool,
+    },
     /// Clear local state for a PR
     Reset,
 }
@@ -71,6 +80,7 @@ fn build_status_output(pr_ref: &PrRef) -> Result<StatusOutput> {
     let (verdict_val, new_comments, summary) = verdict::compute(&data, &st, &config);
     let ci = verdict::build_ci_output(&data.checks);
     let reviews = verdict::build_reviews_output(&data.reviews, &data.head_sha);
+    let coderabbit = verdict::build_coderabbit_output(&data, &config);
 
     Ok(StatusOutput {
         pr: PrInfoOutput {
@@ -84,6 +94,7 @@ fn build_status_output(pr_ref: &PrRef) -> Result<StatusOutput> {
         new_comments,
         reviews,
         requested_reviewers: data.requested_reviewers,
+        coderabbit,
         summary,
     })
 }
@@ -191,6 +202,75 @@ fn cmd_request_copilot_review(pr_ref: &PrRef) -> Result<()> {
     Ok(())
 }
 
+fn cmd_request_coderabbit_review(pr_ref: &PrRef, full: bool, force: bool) -> Result<()> {
+    let rug_dir = state::rug_dir()?;
+    let key = pr_ref.state_key();
+    let mut st = State::load(&rug_dir, &key)?;
+    let head_sha = github::fetch_head_sha(pr_ref)?;
+
+    // GitHub shows no pending request for CodeRabbit, so remember which HEAD was asked about:
+    // asking again before a new push would only add noise to the PR.
+    let requested = force || !st.coderabbit_requested(&head_sha);
+    if requested {
+        // Record the request before posting so a posted comment always has its guard; undo the
+        // record if posting fails.
+        let previous = st.coderabbit_requested_for.clone();
+        st.mark_coderabbit_requested(&head_sha);
+        st.save(&rug_dir, &key)?;
+        if let Err(err) = github::request_coderabbit_review(pr_ref, full) {
+            st.coderabbit_requested_for = previous;
+            st.save(&rug_dir, &key)?;
+            return Err(err);
+        }
+        eprintln!("Requested CodeRabbit review on PR #{}.", pr_ref.number);
+
+        // Best effort: the request is already posted, so don't fail the command over this
+        eprintln!("waiting for CodeRabbit to start reviewing...");
+        match wait_for_coderabbit_pickup(pr_ref) {
+            Ok(true) => eprintln!("CodeRabbit is reviewing."),
+            Ok(false) => eprintln!(
+                "CodeRabbit hasn't started reviewing after a minute; it may have declined the \
+                 request."
+            ),
+            Err(err) => eprintln!("Couldn't check whether CodeRabbit started reviewing: {err:#}"),
+        }
+    } else {
+        eprintln!(
+            "CodeRabbit review already requested for HEAD {head_sha} on PR #{}; \
+             pass --force to request again.",
+            pr_ref.number
+        );
+    }
+
+    let output = serde_json::json!({
+        "requested_reviewer": "coderabbit",
+        "pr": pr_ref.number,
+        "head_sha": head_sha,
+        "requested": requested,
+    });
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+/// Wait up to a minute for CodeRabbit to start a requested review, returning whether it did.
+/// CodeRabbit marks its status "Review in progress" about 10s after the comment; once it has,
+/// a following `watch` waits for the review instead of returning before it starts.
+fn wait_for_coderabbit_pickup(pr_ref: &PrRef) -> Result<bool> {
+    let timeout = Duration::from_secs(60);
+    let poll_interval = Duration::from_secs(5);
+    let start = Instant::now();
+    loop {
+        let (checks, _) = github::fetch_checks(pr_ref)?;
+        if verdict::coderabbit_reviewing(&checks) {
+            return Ok(true);
+        }
+        if start.elapsed() + poll_interval > timeout {
+            return Ok(false);
+        }
+        std::thread::sleep(poll_interval);
+    }
+}
+
 fn cmd_reset(pr_ref: &PrRef) -> Result<()> {
     let rug_dir = state::rug_dir()?;
     State::delete(&rug_dir, &pr_ref.state_key())?;
@@ -209,6 +289,9 @@ fn main() -> Result<()> {
         Commands::Watch { timeout, settle } => cmd_watch(&pr_ref, timeout, settle),
         Commands::MarkAddressed { ids } => cmd_mark_addressed(&pr_ref, &ids),
         Commands::RequestCopilotReview => cmd_request_copilot_review(&pr_ref),
+        Commands::RequestCoderabbitReview { full, force } => {
+            cmd_request_coderabbit_review(&pr_ref, full, force)
+        }
         Commands::Reset => cmd_reset(&pr_ref),
     }
 }

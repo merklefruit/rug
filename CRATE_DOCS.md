@@ -16,6 +16,8 @@ rug watch                                          # block until checks settle, 
 rug watch --timeout 300 --settle 30                # custom timeout and settle window
 rug mark-addressed 1001 1002                       # mark comment IDs as addressed
 rug request-copilot-review                         # re-request a GitHub Copilot review
+rug request-coderabbit-review                      # ask CodeRabbit to review the latest push
+rug request-coderabbit-review --full               # ...or to review the whole PR again
 rug reset                                          # clear local addressed state
 ```
 
@@ -25,6 +27,21 @@ predates the current HEAD — plus `requested_reviewers` (pending review request
 `request-copilot-review` re-requests a Copilot review via `gh pr edit
 --add-reviewer @copilot` (the REST `requested_reviewers` endpoint does not accept
 Copilot); it needs a `gh` version that supports `@copilot` as a reviewer.
+
+When CodeRabbit has reviewed the PR, `status` and `watch` also report
+`coderabbit`: its progress on HEAD as `{ state, detail }` (`reviewing`,
+`reviewed`, `paused`, `skipped`, `rate_limited`, `failed`, or `not_reviewed`).
+It is read from the `CodeRabbit` commit status CodeRabbit sets on each commit,
+because CodeRabbit can finish a commit without submitting a new review; review
+freshness is only the fallback when there is no status. It is omitted when
+`review_bots` leaves CodeRabbit out.
+
+CodeRabbit takes commands from PR comments rather than review requests, so
+`request-coderabbit-review` posts `@coderabbitai review` (`@coderabbitai full
+review` with `--full`), then waits up to a minute for CodeRabbit to start
+reviewing. It posts at most once per HEAD, tracked in `.rug/`; pass `--force` to
+ask again. CodeRabbit ignores commands from bot accounts, so `gh` must be
+authenticated as a user, not with the Actions `GITHUB_TOKEN`.
 
 ## Configuration
 
@@ -52,11 +69,12 @@ src/
   types.rs     GraphQL response types, domain model, JSON output types
   config.rs    rug.toml parsing
   pr.rs        PR URL parsing + branch-to-PR resolution via gh
-  state.rs     .rug/ local state (addressed comment IDs)
+  state.rs     .rug/ local state (addressed comment IDs, CodeRabbit requests)
   github.rs    gh api graphql calls + response parsing
   verdict.rs   Verdict computation + comment filtering
 ```
 
 All GitHub reads go through `gh api graphql` as a subprocess: no HTTP client dependency.
-The one write action, `request-copilot-review`, shells out to `gh pr edit --add-reviewer @copilot`.
+The two write actions shell out to `gh pr`: `request-copilot-review` runs `gh pr edit --add-reviewer @copilot`,
+and `request-coderabbit-review` runs `gh pr comment`.
 Auth is inherited from the user's `gh` session or `GITHUB_TOKEN` env var.

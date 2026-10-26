@@ -148,8 +148,28 @@ pub struct CommitNodeGql {
 pub struct CommitGql {
     #[serde(rename = "pushedDate")]
     pub pushed_date: Option<String>,
+    /// The commit's statuses; only CodeRabbit's is requested.
+    pub status: Option<CommitStatusGql>,
     #[serde(rename = "statusCheckRollup")]
     pub status_check_rollup: Option<StatusCheckRollupGql>,
+}
+
+/// A commit's statuses, with CodeRabbit's looked up by name. The rollup's single page of
+/// contexts can miss it on repos with more than 100 checks.
+#[allow(dead_code)]
+#[derive(Deserialize)]
+pub struct CommitStatusGql {
+    pub context: Option<StatusContextGql>,
+}
+
+/// A single commit status.
+#[allow(dead_code)]
+#[derive(Deserialize)]
+pub struct StatusContextGql {
+    pub state: String,
+    pub description: Option<String>,
+    #[serde(rename = "targetUrl")]
+    pub target_url: Option<String>,
 }
 
 /// Aggregated status check rollup for a commit.
@@ -171,16 +191,30 @@ pub enum CheckContextGql {
         conclusion: Option<String>,
         #[serde(rename = "detailsUrl")]
         details_url: Option<String>,
+        /// Only requested by the full query.
+        #[serde(default)]
+        title: Option<String>,
     },
     StatusContext {
         context: String,
         state: String,
         #[serde(rename = "targetUrl")]
         target_url: Option<String>,
+        /// Only requested by the full query.
+        #[serde(default)]
+        description: Option<String>,
     },
 }
 
 // ── Domain types (internal) ──
+
+/// CodeRabbit's login as the GraphQL API reports it (`coderabbitai[bot]` in REST and the web UI).
+pub const CODERABBIT_LOGIN: &str = "coderabbitai";
+
+/// Name of the commit status CodeRabbit sets on each commit it processes ("Review in progress",
+/// "Review completed", "Review paused", ...). A check run with this name, which newer CodeRabbit
+/// setups may publish instead, is read the same way.
+pub const CODERABBIT_STATUS: &str = "CodeRabbit";
 
 /// A parsed reference to a GitHub pull request.
 #[derive(Debug, Clone)]
@@ -347,6 +381,9 @@ pub struct Check {
     pub status: CheckStatus,
     /// URL to the check details page.
     pub url: Option<String>,
+    /// Short status text: a commit status's description or a check run's title (e.g.
+    /// CodeRabbit's "Review paused"). Only fetched by the full query.
+    pub detail: Option<String>,
 }
 
 /// Status of a CI check.
@@ -375,6 +412,40 @@ impl CheckStatus {
             Self::Failure => "failure",
             Self::Neutral => "neutral",
             Self::Skipped => "skipped",
+        }
+    }
+}
+
+/// CodeRabbit's progress on the PR's current HEAD.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CodeRabbitState {
+    /// A review of HEAD is in progress.
+    Reviewing,
+    /// CodeRabbit has finished reviewing HEAD.
+    Reviewed,
+    /// Automatic reviews are paused, so HEAD was not reviewed.
+    Paused,
+    /// CodeRabbit skipped HEAD (e.g. incremental reviews are disabled).
+    Skipped,
+    /// CodeRabbit hit its review rate limit.
+    RateLimited,
+    /// CodeRabbit's review of HEAD failed.
+    Failed,
+    /// No sign that CodeRabbit has reviewed HEAD.
+    NotReviewed,
+}
+
+impl CodeRabbitState {
+    /// Returns the lowercase string representation for JSON output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Reviewing => "reviewing",
+            Self::Reviewed => "reviewed",
+            Self::Paused => "paused",
+            Self::Skipped => "skipped",
+            Self::RateLimited => "rate_limited",
+            Self::Failed => "failed",
+            Self::NotReviewed => "not_reviewed",
         }
     }
 }
@@ -429,6 +500,9 @@ pub struct StatusOutput {
     /// Logins with a currently-requested (pending) review. Omitted when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub requested_reviewers: Vec<String>,
+    /// CodeRabbit's progress on HEAD. Omitted unless CodeRabbit has reviewed this PR.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coderabbit: Option<CodeRabbitOutput>,
     /// Summary counts.
     pub summary: SummaryOutput,
 }
@@ -497,6 +571,17 @@ pub struct ReviewOutput {
     /// True if the review predates the current HEAD — i.e. the reviewer has not
     /// seen the latest push and a re-review may be warranted.
     pub stale: bool,
+}
+
+/// CodeRabbit's progress on the current HEAD in JSON output.
+#[derive(Serialize)]
+pub struct CodeRabbitOutput {
+    /// "reviewing", "reviewed", "paused", "skipped", "rate_limited", "failed", or "not_reviewed".
+    pub state: String,
+    /// CodeRabbit's own status text for HEAD (e.g. "Review skipped: incremental reviews are
+    /// disabled"). Omitted when CodeRabbit posted no status on HEAD.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Comment count summary in JSON output.
