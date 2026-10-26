@@ -99,57 +99,75 @@ fn cmd_watch(pr_ref: &PrRef, timeout_secs: u64, settle_override: Option<u64>) ->
     let config = Config::load(&std::env::current_dir()?)?;
     let settle_secs = settle_override.unwrap_or(config.settle_window);
     let timeout = Duration::from_secs(timeout_secs);
-    let poll_interval = Duration::from_secs(20);
     let start = Instant::now();
 
     // Check if there are already actionable comments — return immediately if so
     let initial = build_status_output(pr_ref)?;
     if !initial.new_comments.is_empty() {
-        eprintln!("{} unresolved comment(s) already present, returning immediately", initial.new_comments.len());
+        eprintln!(
+            "{} unresolved comment(s) already present, returning immediately",
+            initial.new_comments.len()
+        );
         println!("{}", serde_json::to_string_pretty(&initial)?);
         return Ok(());
     }
 
-    // Poll until all checks settle
     loop {
-        if start.elapsed() > timeout {
-            bail!("Timed out after {}s waiting for checks to settle", timeout_secs);
+        wait_for_checks(pr_ref, start, timeout)?;
+
+        // Settle window — wait for review bots to post
+        if settle_secs > 0 {
+            eprintln!("checks settled, waiting {settle_secs}s for review bots...");
+            let settle_duration = Duration::from_secs(settle_secs);
+            let remaining = timeout.saturating_sub(start.elapsed());
+            std::thread::sleep(settle_duration.min(remaining));
         }
 
+        // Return full status, unless a check started during the settle window (e.g. CodeRabbit
+        // picking up a review request) and there is nothing to fix yet — then keep waiting
+        // while time is left
+        let output = build_status_output(pr_ref)?;
+        if output.ci.all_settled || !output.new_comments.is_empty() || start.elapsed() >= timeout {
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            return Ok(());
+        }
+        eprintln!("a check started during the settle window, waiting again...");
+    }
+}
+
+/// Poll CI checks until they all settle. Fails once `timeout` has passed since `start`.
+fn wait_for_checks(pr_ref: &PrRef, start: Instant, timeout: Duration) -> Result<()> {
+    let poll_interval = Duration::from_secs(20);
+    loop {
         let (checks, _) = github::fetch_checks(pr_ref)?;
         let ci = verdict::build_ci_output(&checks);
 
-        let total = ci.checks.len();
-        let elapsed = start.elapsed().as_secs();
+        let pending: Vec<_> = ci
+            .checks
+            .iter()
+            .filter(|c| c.status == "in_progress" || c.status == "queued")
+            .map(|c| c.name.as_str())
+            .collect();
         eprintln!(
             "waiting for checks to settle... ({}/{} complete, {}s elapsed)",
-            ci.checks.iter().filter(|c| c.status != "in_progress" && c.status != "queued").count(),
-            total,
-            elapsed
+            ci.checks.len() - pending.len(),
+            ci.checks.len(),
+            start.elapsed().as_secs()
         );
 
         if ci.all_settled {
-            break;
+            return Ok(());
         }
 
         if start.elapsed() + poll_interval > timeout {
-            bail!("Timed out after {}s waiting for checks to settle", timeout_secs);
+            bail!(
+                "Timed out after {}s waiting for checks to settle (still pending: {})",
+                timeout.as_secs(),
+                pending.join(", ")
+            );
         }
         std::thread::sleep(poll_interval);
     }
-
-    // Settle window — wait for review bots to post
-    if settle_secs > 0 {
-        eprintln!("checks settled, waiting {}s for review bots...", settle_secs);
-        let settle_duration = Duration::from_secs(settle_secs);
-        let remaining = timeout.saturating_sub(start.elapsed());
-        std::thread::sleep(settle_duration.min(remaining));
-    }
-
-    // Return full status
-    let output = build_status_output(pr_ref)?;
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    Ok(())
 }
 
 fn cmd_mark_addressed(pr_ref: &PrRef, ids: &[u64]) -> Result<()> {
