@@ -74,6 +74,11 @@ impl State {
         self.coderabbit_requested_for.as_deref() == Some(head_sha)
     }
 
+    /// Check if a CodeRabbit review was ever requested for this PR.
+    pub fn coderabbit_ever_requested(&self) -> bool {
+        self.coderabbit_requested_for.is_some()
+    }
+
     /// Delete the state file for a given PR.
     pub fn delete(rug_dir: &Path, key: &str) -> Result<()> {
         let path = Self::state_path(rug_dir, key);

@@ -15,7 +15,7 @@ rug owner/repo#123 checks                          # short ref
 rug watch                                          # block until checks settle, print status
 rug watch --timeout 300 --settle 30                # custom timeout and settle window
 rug mark-addressed 1001 1002                       # mark comment IDs as addressed
-rug request-copilot-review                         # re-request a GitHub Copilot review
+rug request-copilot-review                         # request a GitHub Copilot review
 rug request-coderabbit-review                      # ask CodeRabbit to review the latest push
 rug request-coderabbit-review --full               # ...or to review the whole PR again
 rug reset                                          # clear local addressed state
@@ -28,7 +28,8 @@ predates the current HEAD — plus `requested_reviewers` (pending review request
 --add-reviewer @copilot` (the REST `requested_reviewers` endpoint does not accept
 Copilot); it needs a `gh` version that supports `@copilot` as a reviewer.
 
-When CodeRabbit has reviewed the PR, `status` and `watch` also report
+When CodeRabbit has reviewed the PR, or rug has asked it to (which is how the
+skill adds it as a reviewer), `status` and `watch` also report
 `coderabbit`: its progress on HEAD as `{ state, detail }` (`reviewing`,
 `reviewed`, `paused`, `skipped`, `rate_limited`, `failed`, or `not_reviewed`).
 It is read from the `CodeRabbit` commit status CodeRabbit sets on each commit,

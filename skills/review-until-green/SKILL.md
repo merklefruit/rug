@@ -1,11 +1,13 @@
 ---
 name: review-until-green
-description: Fix PR review comments and CI failures in a loop until green. Requires `rug` CLI.
+description: Fix PR review comments and CI failures in a loop until green, optionally adding CodeRabbit or Copilot as a reviewer first. Requires `rug` CLI.
 ---
 
 # review-until-green
 
 Fix a PR until it's green: every review comment addressed, CI passing, and — when Copilot or CodeRabbit is a reviewer — it has reviewed the latest code. Use the `rug` CLI for ALL GitHub state and actions. Never call `gh` directly.
+
+The user can also ask to add CodeRabbit or Copilot as a reviewer (e.g. `/review-until-green add coderabbit as reviewer`); see ADD_REVIEWERS.
 
 **Requires:** `rug` on PATH. Install: `cargo install --git https://github.com/merklefruit/rug`
 **Setup:** Ensure `.rug/` is in `.gitignore` (stores local delta-tracking state).
@@ -20,7 +22,7 @@ PR ref is an optional positional arg BEFORE the subcommand. Omit = current branc
 | `rug [pr] checks`                    | JSON: ci status only (lightweight poll)            |
 | `rug [pr] watch`                     | Block until checks settle, then print full status  |
 | `rug [pr] mark-addressed <ids...>`   | Mark comment IDs as fixed locally                  |
-| `rug [pr] request-copilot-review`    | Re-request a GitHub Copilot review                 |
+| `rug [pr] request-copilot-review`    | Request a GitHub Copilot review                    |
 | `rug [pr] request-coderabbit-review` | Ask CodeRabbit to review the latest push           |
 | `rug [pr] reset`                     | Clear local addressed state                        |
 
@@ -37,11 +39,21 @@ PR ref is an optional positional arg BEFORE the subcommand. Omit = current branc
   review freshness when there is none). `state` is
   `reviewed`/`reviewing`/`paused`/`skipped`/`rate_limited`/`failed`/`not_reviewed`;
   `detail` is CodeRabbit's own status text. Omitted unless CodeRabbit has
-  reviewed this PR.
+  reviewed this PR or was asked to (`request-coderabbit-review`).
 
 ## Loop (max 5 iterations)
 
+Begin at ADD_REVIEWERS if the user asked to add a reviewer, else at START.
+
 ```
+ADD_REVIEWERS:                # only when the user asked for it
+  run `rug [pr] status`
+  add CodeRabbit: `coderabbit` omitted (not a reviewer yet)
+    → run `rug [pr] request-coderabbit-review`
+  add Copilot: no Copilot review and not in `requested_reviewers`
+    → run `rug [pr] request-copilot-review`
+  → START                     # the gate then treats it as a reviewer
+
 START:
   run `rug [pr] watch`        # blocks until CI + review bots settle
   parse JSON output (same schema as `rug status`)
@@ -79,13 +91,13 @@ REREVIEW_GATE:                # all comments addressed + CI green
 
   Copilot: its latest review in `reviews`, the entry whose `author`
   (case-insensitive) is `copilot-pull-request-reviewer` or `copilot`.
+    in `requested_reviewers`    → WAIT (a Copilot review is pending)
     no Copilot review           → ok (Copilot is not a reviewer)
     state == "approved"         → ok
     stale == false              → ok (Copilot already reviewed this HEAD*)
-    stale, login in `requested_reviewers` → WAIT (re-review already pending)
-    stale otherwise             → run `rug [pr] request-copilot-review`; WAIT
+    stale                       → run `rug [pr] request-copilot-review`; WAIT
 
-  CodeRabbit: the `coderabbit` object.
+  CodeRabbit: the `coderabbit` object (present once it reviewed or was asked).
     omitted                     → ok (CodeRabbit is not a reviewer)
     state == "reviewed"         → ok
     state == "reviewing"        → WAIT
@@ -110,8 +122,8 @@ REREVIEW_GATE:                # all comments addressed + CI green
 4. Always `mark-addressed` after push so delta tracking works.
 5. If stuck on a comment, stop loop, report to user.
 6. One commit per fix cycle.
-7. Re-request reviews only as REREVIEW_GATE (or FIX_CI, for a failing `CodeRabbit` check) says: Copilot only when its latest review is `stale` and Copilot is not already in `requested_reviewers`, CodeRabbit only when `coderabbit.state` says it hasn't reviewed HEAD. Never re-request in a tight loop, and don't re-request other reviewers.
+7. Request reviews only as ADD_REVIEWERS, REREVIEW_GATE, or FIX_CI (for a failing `CodeRabbit` check) says: add a reviewer only when the user asked for it; re-request Copilot only when its latest review is `stale` and Copilot is not already in `requested_reviewers`, CodeRabbit only when `coderabbit.state` says it hasn't reviewed HEAD. Never re-request in a tight loop, and don't request other reviewers.
 
 ## Summary (on exit)
 
-Report: final verdict, loop count, comments addressed (file:line + description), any Copilot or CodeRabbit re-reviews requested, unresolved items (including a CodeRabbit that was rate limited or didn't review HEAD).
+Report: final verdict, loop count, comments addressed (file:line + description), reviewers added and Copilot or CodeRabbit re-reviews requested, unresolved items (including a CodeRabbit that was rate limited or didn't review HEAD).

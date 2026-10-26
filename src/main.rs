@@ -50,7 +50,7 @@ enum Commands {
         #[arg(required = true)]
         ids: Vec<u64>,
     },
-    /// Re-request a code review from GitHub Copilot
+    /// Request a code review from GitHub Copilot (adds Copilot as a reviewer)
     RequestCopilotReview,
     /// Ask CodeRabbit to review the latest push (posts `@coderabbitai review`)
     RequestCoderabbitReview {
@@ -80,7 +80,7 @@ fn build_status_output(pr_ref: &PrRef) -> Result<StatusOutput> {
     let (verdict_val, new_comments, summary) = verdict::compute(&data, &st, &config);
     let ci = verdict::build_ci_output(&data.checks);
     let reviews = verdict::build_reviews_output(&data.reviews, &data.head_sha);
-    let coderabbit = verdict::build_coderabbit_output(&data, &config);
+    let coderabbit = verdict::build_coderabbit_output(&data, &st, &config);
 
     Ok(StatusOutput {
         pr: PrInfoOutput {
