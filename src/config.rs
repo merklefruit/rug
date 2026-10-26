@@ -8,6 +8,7 @@ use std::path::Path;
 #[derive(Debug, Deserialize)]
 pub struct Config {
     /// Only process comments from these authors. `None` means all comments are actionable.
+    /// Logins match case-insensitively, with or without a `[bot]` suffix.
     pub review_bots: Option<Vec<String>>,
     /// Seconds to wait after all checks settle before final status check.
     #[serde(default = "default_settle_window")]

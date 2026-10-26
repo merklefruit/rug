@@ -17,6 +17,10 @@ pub struct State {
     pub addressed: HashSet<u64>,
     /// The head SHA when we last processed this PR.
     pub head_sha: Option<String>,
+    /// HEAD SHA a CodeRabbit review was last requested for. CodeRabbit can't be a requested
+    /// reviewer on GitHub, so this is the only record that a request was already made.
+    #[serde(default)]
+    pub coderabbit_requested_for: Option<String>,
 }
 
 impl State {
@@ -58,6 +62,21 @@ impl State {
     /// Check if a comment ID has been addressed.
     pub fn is_addressed(&self, id: u64) -> bool {
         self.addressed.contains(&id)
+    }
+
+    /// Record that a CodeRabbit review was requested for the given HEAD SHA.
+    pub fn mark_coderabbit_requested(&mut self, head_sha: &str) {
+        self.coderabbit_requested_for = Some(head_sha.to_string());
+    }
+
+    /// Check if a CodeRabbit review was already requested for the given HEAD SHA.
+    pub fn coderabbit_requested(&self, head_sha: &str) -> bool {
+        self.coderabbit_requested_for.as_deref() == Some(head_sha)
+    }
+
+    /// Check if a CodeRabbit review was ever requested for this PR.
+    pub fn coderabbit_ever_requested(&self) -> bool {
+        self.coderabbit_requested_for.is_some()
     }
 
     /// Delete the state file for a given PR.
@@ -133,6 +152,34 @@ mod tests {
         let loaded = State::load(dir.path(), "test-pr").unwrap();
         assert!(loaded.is_addressed(1001));
         assert!(loaded.is_addressed(1002));
+    }
+
+    #[test]
+    fn test_coderabbit_requested() {
+        let dir = tempdir().unwrap();
+        let mut state = State::default();
+        assert!(!state.coderabbit_requested("abc"));
+
+        state.mark_coderabbit_requested("abc");
+        state.save(dir.path(), "test-pr").unwrap();
+
+        let mut loaded = State::load(dir.path(), "test-pr").unwrap();
+        assert!(loaded.coderabbit_requested("abc"));
+        // A new push is a new HEAD, which gets its own request.
+        assert!(!loaded.coderabbit_requested("def"));
+        loaded.mark_coderabbit_requested("def");
+        assert!(!loaded.coderabbit_requested("abc"));
+    }
+
+    #[test]
+    fn test_load_state_without_coderabbit_field() {
+        // State files written before CodeRabbit support still load.
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("test-pr.json"), r#"{"addressed":[7],"head_sha":null}"#)
+            .unwrap();
+        let state = State::load(dir.path(), "test-pr").unwrap();
+        assert!(state.is_addressed(7));
+        assert!(state.coderabbit_requested_for.is_none());
     }
 
     #[test]

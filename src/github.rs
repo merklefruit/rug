@@ -54,6 +54,13 @@ query($owner: String!, $name: String!, $number: Int!) {
         nodes {
           commit {
             pushedDate
+            status {
+              context(name: "CodeRabbit") {
+                state
+                description
+                targetUrl
+              }
+            }
             statusCheckRollup {
               state
               contexts(first: 100) {
@@ -64,11 +71,13 @@ query($owner: String!, $name: String!, $number: Int!) {
                     status
                     conclusion
                     detailsUrl
+                    title
                   }
                   ... on StatusContext {
                     context
                     state
                     targetUrl
+                    description
                   }
                 }
               }
@@ -92,6 +101,13 @@ query($owner: String!, $name: String!, $number: Int!) {
         nodes {
           commit {
             pushedDate
+            status {
+              context(name: "CodeRabbit") {
+                state
+                description
+                targetUrl
+              }
+            }
             statusCheckRollup {
               state
               contexts(first: 100) {
@@ -259,23 +275,36 @@ fn parse_checks(pr: &PullRequestGql) -> (Vec<Check>, Option<String>) {
         return (vec![], pushed_at);
     };
 
-    let checks = rollup
+    let mut checks: Vec<Check> = rollup
         .contexts
         .nodes
         .iter()
         .map(|ctx| match ctx {
-            CheckContextGql::CheckRun { name, status, conclusion, details_url } => Check {
+            CheckContextGql::CheckRun { name, status, conclusion, details_url, title } => Check {
                 name: name.clone(),
                 status: check_run_status(status, conclusion.as_deref()),
                 url: details_url.clone(),
+                detail: title.clone(),
             },
-            CheckContextGql::StatusContext { context, state, target_url } => Check {
+            CheckContextGql::StatusContext { context, state, target_url, description } => Check {
                 name: context.clone(),
                 status: status_context_state(state),
                 url: target_url.clone(),
+                detail: description.clone(),
             },
         })
         .collect();
+
+    // The rollup's page of contexts can miss CodeRabbit's status on repos with many checks
+    let coderabbit = commit_node.commit.status.as_ref().and_then(|s| s.context.as_ref());
+    if let Some(ctx) = coderabbit.filter(|_| !checks.iter().any(|c| c.name == CODERABBIT_STATUS)) {
+        checks.push(Check {
+            name: CODERABBIT_STATUS.to_string(),
+            status: status_context_state(&ctx.state),
+            url: ctx.target_url.clone(),
+            detail: ctx.description.clone(),
+        });
+    }
 
     (checks, pushed_at)
 }
@@ -321,6 +350,12 @@ pub fn fetch_checks(pr: &PrRef) -> Result<(Vec<Check>, Option<String>)> {
     parse_checks_response(&json)
 }
 
+/// Fetch the SHA of the PR's current HEAD commit.
+pub fn fetch_head_sha(pr: &PrRef) -> Result<String> {
+    let json = call_gh_graphql(pr, CHECKS_QUERY)?;
+    Ok(unwrap_pr_gql(&json)?.head_ref_oid)
+}
+
 /// Re-request a code review from GitHub Copilot on the given PR.
 ///
 /// Uses `gh pr edit --add-reviewer @copilot`, the documented mechanism for
@@ -348,6 +383,35 @@ pub fn request_copilot_review(pr: &PrRef) -> Result<()> {
              Ensure Copilot code review is enabled for the repo and that `gh` is recent \
              enough to support `--add-reviewer @copilot` (gh 2.x, March 2026+)."
         );
+    }
+
+    Ok(())
+}
+
+/// Ask CodeRabbit to review the given PR.
+///
+/// CodeRabbit takes commands from PR comments and can't be added as a requested reviewer, so
+/// this posts `@coderabbitai review` (incremental: the commits since its last review) or, with
+/// `full`, `@coderabbitai full review` (the whole PR from scratch). Both work while CodeRabbit's
+/// automatic reviews are paused.
+pub fn request_coderabbit_review(pr: &PrRef, full: bool) -> Result<()> {
+    let body = if full { "@coderabbitai full review" } else { "@coderabbitai review" };
+    let output = Command::new("gh")
+        .args([
+            "pr",
+            "comment",
+            &pr.number.to_string(),
+            "--repo",
+            &format!("{}/{}", pr.owner, pr.repo),
+            "--body",
+            body,
+        ])
+        .output()
+        .context("Failed to run `gh pr comment`. Is gh CLI installed and authenticated?")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to request CodeRabbit review: {stderr}");
     }
 
     Ok(())
@@ -462,7 +526,8 @@ mod tests {
                         "name": "tests",
                         "status": "COMPLETED",
                         "conclusion": "FAILURE",
-                        "detailsUrl": "https://github.com/octocat/repo/actions/runs/1"
+                        "detailsUrl": "https://github.com/octocat/repo/actions/runs/1",
+                        "title": "2 tests failed"
                       },
                       {
                         "__typename": "CheckRun",
@@ -475,7 +540,8 @@ mod tests {
                         "__typename": "StatusContext",
                         "context": "deploy/preview",
                         "state": "PENDING",
-                        "targetUrl": "https://preview.example.com"
+                        "targetUrl": "https://preview.example.com",
+                        "description": "Deploying preview"
                       }
                     ]
                   }
@@ -527,6 +593,57 @@ mod tests {
 
         assert_eq!(data.checks[2].name, "deploy/preview");
         assert_eq!(data.checks[2].status, CheckStatus::InProgress);
+    }
+
+    /// A checks-only response whose rollup page has `contexts` and whose CodeRabbit status,
+    /// looked up by name, is `coderabbit`.
+    fn checks_response(contexts: &str, coderabbit: &str) -> String {
+        format!(
+            r#"{{"data": {{"repository": {{"pullRequest": {{
+                "number": 1, "state": "OPEN", "headRefOid": "abc",
+                "commits": {{"nodes": [{{"commit": {{
+                    "pushedDate": null,
+                    "status": {{"context": {coderabbit}}},
+                    "statusCheckRollup": {{"state": "SUCCESS", "contexts": {{"nodes": [{contexts}]}}}}
+                }}}}]}}
+            }}}}}}}}"#
+        )
+    }
+
+    const CODERABBIT_PAUSED: &str =
+        r#"{"state": "SUCCESS", "description": "Review paused", "targetUrl": null}"#;
+
+    #[test]
+    fn test_parse_coderabbit_status_beyond_first_page() {
+        // The rollup page (100 contexts) didn't include CodeRabbit's status.
+        let ci = r#"{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED",
+                     "conclusion": "SUCCESS", "detailsUrl": null}"#;
+        let (checks, _) = parse_checks_response(&checks_response(ci, CODERABBIT_PAUSED)).unwrap();
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[1].name, "CodeRabbit");
+        assert_eq!(checks[1].status, CheckStatus::Success);
+        assert_eq!(checks[1].detail.as_deref(), Some("Review paused"));
+    }
+
+    #[test]
+    fn test_parse_coderabbit_status_not_duplicated() {
+        let on_page = r#"{"__typename": "StatusContext", "context": "CodeRabbit",
+                          "state": "SUCCESS", "targetUrl": null, "description": "Review paused"}"#;
+        let (checks, _) =
+            parse_checks_response(&checks_response(on_page, CODERABBIT_PAUSED)).unwrap();
+        assert_eq!(checks.len(), 1);
+        // No CodeRabbit status on the commit at all.
+        let (checks, _) = parse_checks_response(&checks_response("", "null")).unwrap();
+        assert!(checks.is_empty());
+    }
+
+    #[test]
+    fn test_parse_check_details() {
+        let data = parse_pr_response(fixture_full_response()).unwrap();
+        // A check run's title, or a commit status's description; absent fields parse as None.
+        assert_eq!(data.checks[0].detail.as_deref(), Some("2 tests failed"));
+        assert_eq!(data.checks[1].detail, None);
+        assert_eq!(data.checks[2].detail.as_deref(), Some("Deploying preview"));
     }
 
     #[test]

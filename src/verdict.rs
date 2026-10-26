@@ -5,17 +5,30 @@
 
 use crate::{config::Config, state::State, types::*};
 
+/// Whether two GitHub logins name the same account. Logins are case-insensitive, and the GraphQL
+/// API reports bots without the `[bot]` suffix that REST and the web UI show (`coderabbitai` vs
+/// `coderabbitai[bot]`), so either form matches.
+fn same_login(a: &str, b: &str) -> bool {
+    fn base(login: &str) -> &str {
+        login.strip_suffix("[bot]").unwrap_or(login)
+    }
+    base(a).eq_ignore_ascii_case(base(b))
+}
+
+/// Whether the review_bots config makes comments by `login` actionable.
+fn is_tracked_author(config: &Config, login: &str) -> bool {
+    match &config.review_bots {
+        None => true, // All comments are actionable
+        Some(bots) => bots.iter().any(|b| same_login(b, login)),
+    }
+}
+
 /// Filter threads to only unresolved ones, optionally filtered by review_bots config.
 fn relevant_threads<'a>(threads: &'a [Thread], config: &Config) -> Vec<&'a Thread> {
     threads
         .iter()
         .filter(|t| !t.is_resolved)
-        .filter(|t| {
-            match &config.review_bots {
-                None => true, // All comments are actionable
-                Some(bots) => bots.iter().any(|b| b == &t.first_comment.author),
-            }
-        })
+        .filter(|t| is_tracked_author(config, &t.first_comment.author))
         .collect()
 }
 
@@ -102,6 +115,70 @@ pub fn build_reviews_output(reviews: &[Review], head_sha: &str) -> Vec<ReviewOut
         .collect()
 }
 
+/// Build CodeRabbit's progress on HEAD, or `None` if CodeRabbit is not a reviewer here. It is one
+/// once it has reviewed this PR or rug has asked it to (e.g. to add it as a reviewer), unless
+/// review_bots leaves it out (its comments are ignored then anyway).
+///
+/// CodeRabbit's status on HEAD is the signal. Review freshness is only the fallback when there
+/// is no status it recognizes, and a weak one: CodeRabbit can finish a commit without submitting
+/// a new GitHub review (nothing new to say), and its chat replies in review threads are recorded
+/// as reviews on HEAD.
+pub fn build_coderabbit_output(
+    data: &PrData,
+    state: &State,
+    config: &Config,
+) -> Option<CodeRabbitOutput> {
+    if !is_tracked_author(config, CODERABBIT_LOGIN) {
+        return None;
+    }
+    let review = data.reviews.iter().find(|r| same_login(&r.author, CODERABBIT_LOGIN));
+    if review.is_none() && !state.coderabbit_ever_requested() {
+        return None;
+    }
+    let check = data.checks.iter().find(|c| c.name.eq_ignore_ascii_case(CODERABBIT_STATUS));
+
+    let progress = check.and_then(coderabbit_check_state).unwrap_or_else(|| {
+        if review.and_then(|r| r.commit_oid.as_deref()) == Some(data.head_sha.as_str()) {
+            CodeRabbitState::Reviewed
+        } else {
+            CodeRabbitState::NotReviewed
+        }
+    });
+
+    Some(CodeRabbitOutput {
+        state: progress.as_str().to_string(),
+        detail: check.and_then(|c| c.detail.clone()),
+    })
+}
+
+/// Read CodeRabbit's progress from its status on a commit, or `None` if the status text is not
+/// one rug recognizes.
+fn coderabbit_check_state(check: &Check) -> Option<CodeRabbitState> {
+    if !check.status.is_terminal() {
+        return Some(CodeRabbitState::Reviewing);
+    }
+    let detail = check.detail.as_deref().unwrap_or_default().to_ascii_lowercase();
+    let state = if detail.contains("completed") || detail.contains("approved") {
+        CodeRabbitState::Reviewed
+    } else if detail.contains("paused") {
+        CodeRabbitState::Paused
+    } else if detail.contains("rate limit") {
+        CodeRabbitState::RateLimited
+    } else if detail.contains("skipped") {
+        CodeRabbitState::Skipped
+    } else if check.status == CheckStatus::Failure || detail.contains("fail") {
+        CodeRabbitState::Failed
+    } else {
+        return None;
+    };
+    Some(state)
+}
+
+/// Whether CodeRabbit is reviewing the commit these checks belong to.
+pub fn coderabbit_reviewing(checks: &[Check]) -> bool {
+    checks.iter().any(|c| c.name.eq_ignore_ascii_case(CODERABBIT_STATUS) && !c.status.is_terminal())
+}
+
 /// Build CiOutput from checks.
 pub fn build_ci_output(checks: &[Check]) -> CiOutput {
     let (all_settled, any_failing) = checks.iter().fold((true, false), |(settled, failing), c| {
@@ -152,7 +229,7 @@ mod tests {
     }
 
     fn make_check(name: &str, status: CheckStatus) -> Check {
-        Check { name: name.to_string(), status, url: None }
+        Check { name: name.to_string(), status, url: None, detail: None }
     }
 
     #[test]
@@ -320,6 +397,42 @@ mod tests {
     }
 
     #[test]
+    fn test_review_bots_filter_matches_graphql_bot_logins() {
+        // GraphQL reports bot authors without the `[bot]` suffix that GitHub's UI shows.
+        let data = PrData {
+            number: 1,
+            repo: "owner/repo".to_string(),
+            state: PrState::Open,
+            head_sha: "abc".to_string(),
+            threads: vec![
+                make_thread(1, "coderabbitai", false),
+                make_thread(2, "cursor", false),
+                make_thread(3, "human-reviewer", false),
+            ],
+            checks: vec![make_check("ci", CheckStatus::Success)],
+            reviews: vec![],
+            requested_reviewers: vec![],
+            pushed_at: None,
+        };
+        let config = Config {
+            review_bots: Some(vec!["coderabbitai[bot]".to_string(), "Cursor".to_string()]),
+            ..Config::default()
+        };
+        let (_, comments, _) = compute(&data, &State::default(), &config);
+        let ids: Vec<_> = comments.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_same_login() {
+        assert!(same_login("coderabbitai", "coderabbitai[bot]"));
+        assert!(same_login("CodeRabbitAI[bot]", "coderabbitai"));
+        assert!(same_login("alice", "Alice"));
+        assert!(!same_login("coderabbitai", "coderabbit"));
+        assert!(!same_login("alice[bot]x", "alice"));
+    }
+
+    #[test]
     fn test_ci_output_passing() {
         let checks = vec![
             make_check("tests", CheckStatus::Success),
@@ -369,5 +482,175 @@ mod tests {
     #[test]
     fn test_reviews_output_empty() {
         assert!(build_reviews_output(&[], "head").is_empty());
+    }
+
+    /// An open PR at HEAD `head` with the given reviews and checks.
+    fn make_pr(reviews: Vec<Review>, checks: Vec<Check>) -> PrData {
+        PrData {
+            number: 1,
+            repo: "owner/repo".to_string(),
+            state: PrState::Open,
+            head_sha: "head".to_string(),
+            threads: vec![],
+            checks,
+            reviews,
+            requested_reviewers: vec![],
+            pushed_at: None,
+        }
+    }
+
+    fn coderabbit_status(status: CheckStatus, description: &str) -> Check {
+        Check { detail: Some(description.to_string()), ..make_check("CodeRabbit", status) }
+    }
+
+    /// CodeRabbit's state when its latest review is on `review_commit` and HEAD has `checks`.
+    fn coderabbit_state(review_commit: &str, checks: Vec<Check>) -> Option<String> {
+        let reviews =
+            vec![make_review("coderabbitai", ReviewState::Commented, Some(review_commit))];
+        build_coderabbit_output(&make_pr(reviews, checks), &State::default(), &Config::default())
+            .map(|o| o.state)
+    }
+
+    #[test]
+    fn test_coderabbit_absent_without_review() {
+        // CodeRabbit posted a status (e.g. it only summarized the PR) but never reviewed it.
+        let reviews = vec![make_review(
+            "copilot-pull-request-reviewer",
+            ReviewState::Commented,
+            Some("head"),
+        )];
+        let checks = vec![coderabbit_status(CheckStatus::Success, "Review completed")];
+        assert!(
+            build_coderabbit_output(
+                &make_pr(reviews, checks),
+                &State::default(),
+                &Config::default()
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_coderabbit_reviewed() {
+        // Latest review is older, but CodeRabbit finished HEAD with nothing new to post.
+        let checks = vec![coderabbit_status(CheckStatus::Success, "Review completed")];
+        assert_eq!(coderabbit_state("old", checks).as_deref(), Some("reviewed"));
+        // CodeRabbit approved HEAD (automatic approvals).
+        let checks = vec![coderabbit_status(CheckStatus::Success, "Review approved")];
+        assert_eq!(coderabbit_state("old", checks).as_deref(), Some("reviewed"));
+    }
+
+    #[test]
+    fn test_coderabbit_reviewing() {
+        // In progress wins over a review on HEAD (e.g. a requested full review).
+        let checks = vec![coderabbit_status(CheckStatus::InProgress, "Review in progress")];
+        assert_eq!(coderabbit_state("head", checks).as_deref(), Some("reviewing"));
+    }
+
+    #[test]
+    fn test_coderabbit_head_not_reviewed() {
+        let cases = [
+            (CheckStatus::Success, "Review paused", "paused"),
+            (CheckStatus::Success, "Review skipped: incremental reviews are disabled", "skipped"),
+            (CheckStatus::Success, "Review rate limited", "rate_limited"),
+            (CheckStatus::Success, "Review failed", "failed"),
+            (CheckStatus::Failure, "Review errored", "failed"),
+        ];
+        for (status, description, expected) in cases {
+            let checks = vec![coderabbit_status(status, description)];
+            assert_eq!(coderabbit_state("old", checks).as_deref(), Some(expected), "{description}");
+        }
+    }
+
+    #[test]
+    fn test_coderabbit_status_wins_over_review_on_head() {
+        // CodeRabbit's chat replies in review threads are recorded as reviews on HEAD, so a
+        // fresh-looking review doesn't override a status saying HEAD wasn't reviewed.
+        let checks = vec![coderabbit_status(CheckStatus::Success, "Review paused")];
+        assert_eq!(coderabbit_state("head", checks).as_deref(), Some("paused"));
+    }
+
+    #[test]
+    fn test_coderabbit_falls_back_to_review_freshness() {
+        // No status on HEAD (commit statuses disabled), or one rug doesn't recognize.
+        assert_eq!(coderabbit_state("head", vec![]).as_deref(), Some("reviewed"));
+        assert_eq!(coderabbit_state("old", vec![]).as_deref(), Some("not_reviewed"));
+        let unknown = || vec![coderabbit_status(CheckStatus::Success, "Some future status")];
+        assert_eq!(coderabbit_state("head", unknown()).as_deref(), Some("reviewed"));
+        assert_eq!(coderabbit_state("old", unknown()).as_deref(), Some("not_reviewed"));
+    }
+
+    #[test]
+    fn test_coderabbit_output_detail() {
+        let reviews = vec![make_review("coderabbitai", ReviewState::Commented, Some("old"))];
+        let checks = vec![
+            make_check("ci", CheckStatus::Success),
+            coderabbit_status(CheckStatus::Success, "Review paused"),
+        ];
+        let out = build_coderabbit_output(
+            &make_pr(reviews, checks),
+            &State::default(),
+            &Config::default(),
+        )
+        .unwrap();
+        assert_eq!(out.state, "paused");
+        assert_eq!(out.detail.as_deref(), Some("Review paused"));
+
+        // No status on HEAD: no detail.
+        let reviews = vec![make_review("coderabbitai", ReviewState::Commented, Some("old"))];
+        let out = build_coderabbit_output(
+            &make_pr(reviews, vec![]),
+            &State::default(),
+            &Config::default(),
+        )
+        .unwrap();
+        assert_eq!(out.detail, None);
+    }
+
+    #[test]
+    fn test_coderabbit_respects_review_bots() {
+        let pr = || {
+            let reviews = vec![make_review("coderabbitai", ReviewState::Commented, Some("old"))];
+            make_pr(reviews, vec![coderabbit_status(CheckStatus::Success, "Review paused")])
+        };
+        let only =
+            |bot: &str| Config { review_bots: Some(vec![bot.to_string()]), ..Config::default() };
+        // Left out of review_bots, its comments are ignored, so it isn't asked to re-review.
+        assert!(build_coderabbit_output(&pr(), &State::default(), &only("cursor[bot]")).is_none());
+        assert!(
+            build_coderabbit_output(&pr(), &State::default(), &only("coderabbitai[bot]")).is_some()
+        );
+    }
+
+    #[test]
+    fn test_coderabbit_reviewer_once_requested() {
+        // Added as a reviewer: rug asked CodeRabbit, which hasn't submitted a review yet.
+        let mut asked = State::default();
+        asked.mark_coderabbit_requested("head");
+        let state_with = |state: &State, checks: Vec<Check>| {
+            build_coderabbit_output(&make_pr(vec![], checks), state, &Config::default())
+                .map(|o| o.state)
+        };
+
+        let pending = || vec![coderabbit_status(CheckStatus::InProgress, "Review in progress")];
+        assert_eq!(state_with(&asked, pending()).as_deref(), Some("reviewing"));
+        // Not started yet.
+        assert_eq!(state_with(&asked, vec![]).as_deref(), Some("not_reviewed"));
+        // Finished without submitting a review (nothing to say, or only a summary).
+        let done = vec![coderabbit_status(CheckStatus::Success, "Review completed")];
+        assert_eq!(state_with(&asked, done).as_deref(), Some("reviewed"));
+
+        // Never asked and never reviewed: not a reviewer.
+        assert_eq!(state_with(&State::default(), pending()), None);
+    }
+
+    #[test]
+    fn test_coderabbit_reviewing_checks() {
+        let pending = coderabbit_status(CheckStatus::InProgress, "Review in progress");
+        assert!(coderabbit_reviewing(&[make_check("ci", CheckStatus::Success), pending]));
+        let paused = coderabbit_status(CheckStatus::Success, "Review paused");
+        assert!(!coderabbit_reviewing(&[paused]));
+        // Another check in progress is not CodeRabbit reviewing.
+        assert!(!coderabbit_reviewing(&[make_check("ci", CheckStatus::InProgress)]));
     }
 }
