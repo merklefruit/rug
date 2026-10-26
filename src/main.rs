@@ -124,7 +124,10 @@ fn cmd_watch(pr_ref: &PrRef, timeout_secs: u64, settle_override: Option<u64>) ->
     }
 
     loop {
-        wait_for_checks(pr_ref, start, timeout)?;
+        if let Some(output) = wait_for_checks(pr_ref, start, timeout)? {
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            return Ok(());
+        }
 
         // Settle window — wait for review bots to post
         if settle_secs > 0 {
@@ -147,7 +150,15 @@ fn cmd_watch(pr_ref: &PrRef, timeout_secs: u64, settle_override: Option<u64>) ->
 }
 
 /// Poll CI checks until they all settle. Fails once `timeout` has passed since `start`.
-fn wait_for_checks(pr_ref: &PrRef, start: Instant, timeout: Duration) -> Result<()> {
+///
+/// CodeRabbit submits its review minutes before it marks its status completed, so while it is
+/// reviewing, each poll also checks for new comments and returns the full status as soon as
+/// there are some — they can be fixed without waiting for the status.
+fn wait_for_checks(
+    pr_ref: &PrRef,
+    start: Instant,
+    timeout: Duration,
+) -> Result<Option<StatusOutput>> {
     let poll_interval = Duration::from_secs(20);
     loop {
         let (checks, _) = github::fetch_checks(pr_ref)?;
@@ -167,7 +178,18 @@ fn wait_for_checks(pr_ref: &PrRef, start: Instant, timeout: Duration) -> Result<
         );
 
         if ci.all_settled {
-            return Ok(());
+            return Ok(None);
+        }
+
+        if verdict::coderabbit_reviewing(&checks) {
+            let output = build_status_output(pr_ref)?;
+            if !output.new_comments.is_empty() {
+                eprintln!(
+                    "{} new comment(s) while CodeRabbit is still reviewing, returning",
+                    output.new_comments.len()
+                );
+                return Ok(Some(output));
+            }
         }
 
         if start.elapsed() + poll_interval > timeout {

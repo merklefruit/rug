@@ -10,7 +10,7 @@ Fix a PR until it's green: every review comment addressed, CI passing, and — w
 The user can also ask to add CodeRabbit or Copilot as a reviewer (e.g. `/review-until-green add coderabbit as reviewer`); see ADD_REVIEWERS.
 
 **Requires:** `rug` on PATH. Install: `cargo install --git https://github.com/merklefruit/rug`
-**Setup:** Ensure `.rug/` is in `.gitignore` (stores local delta-tracking state).
+**Setup:** Make sure git ignores `.rug/` (local delta-tracking state): add it to `.gitignore`, or to `$(git rev-parse --git-common-dir)/info/exclude` to leave tracked files alone.
 
 ## Commands
 
@@ -58,7 +58,9 @@ START:
   run `rug [pr] watch`        # blocks until CI + review bots settle
   parse JSON output (same schema as `rug status`)
   `watch` timed out → run `rug [pr] status` once: FIX_COMMENTS if new_comments
-    is non-empty, else stop and report the checks still pending
+    is non-empty; START (once) if `CodeRabbit` is the only check still pending,
+    since its first review of a large PR can outlast the timeout; else stop
+    and report the checks still pending
 
   verdict=approved  → REREVIEW_GATE
   verdict=merged    → DONE (tell user, stop)
@@ -112,6 +114,8 @@ REREVIEW_GATE:                # all comments addressed + CI green
   ** rug asks CodeRabbit at most once per HEAD, so false means it was already
     asked about this HEAD and still hasn't reviewed it. Don't judge CodeRabbit
     by `reviews[].stale`: it can finish a commit without submitting a review.
+    On draft PRs CodeRabbit skips every push ("Review skipped: draft pull
+    request"), so each fix cycle asks it again.
 ```
 
 ## Rules
