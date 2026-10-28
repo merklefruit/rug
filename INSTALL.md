@@ -53,6 +53,7 @@ echo '.rug/' >> .gitignore
 /review-until-green
 /review-until-green https://github.com/owner/repo/pull/123
 /review-until-green add coderabbit as reviewer
+/review-until-green with copilot
 ```
 
 ## Configuration (optional)

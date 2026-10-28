@@ -35,7 +35,9 @@ skill adds it as a reviewer), `status` and `watch` also report
 It is read from the `CodeRabbit` commit status CodeRabbit sets on each commit,
 because CodeRabbit can finish a commit without submitting a new review; review
 freshness is only the fallback when there is no status. It is omitted when
-`review_bots` leaves CodeRabbit out.
+`review_bots` leaves CodeRabbit out. While CodeRabbit is reviewing, `watch`
+returns as soon as new comments arrive, because CodeRabbit posts its review
+minutes before it marks the review completed.
 
 CodeRabbit takes commands from PR comments rather than review requests, so
 `request-coderabbit-review` posts `@coderabbitai review` (`@coderabbitai full

@@ -25,7 +25,7 @@ When you ask an agent to “fix this PR until it’s green,” **each iteration*
 
 **`rug` CLI** — Talks to GitHub (via `gh`), returns **compact JSON**, and keeps **local** “already addressed” state so each call can return **only new** comments. Token cost stays flatter as the PR grows.
 
-**`/review-until-green` skill** — Drives the loop: call `rug` for state, apply fixes, push, mark addressed, poll CI/reviews, repeat until the verdict is `approved` (best-effort). When GitHub Copilot or CodeRabbit is a reviewer and hasn't reviewed your latest push, the skill asks it for a fresh review so it sees the final code before stopping. Ask it to add one as a reviewer and it will bring it in first. It does **not** call GitHub’s API itself—only `rug`.
+**`/review-until-green` skill** — Drives the loop: call `rug` for state, apply fixes, push, mark addressed, poll CI/reviews, repeat until the verdict is `approved` (best-effort). When CodeRabbit is a reviewer and hasn't reviewed your latest push, the skill asks it for a fresh review so it sees the final code before stopping. It does the same for GitHub Copilot only if you ask for Copilot, since Copilot reviews use your Copilot quota. Ask it to add one as a reviewer and it will bring it in first. It does **not** call GitHub’s API itself—only `rug`.
 
 ## Setup (for your agent)
 
@@ -53,6 +53,7 @@ See [INSTALL.md](./INSTALL.md) for manual install and config options.
 /review-until-green
 /review-until-green https://github.com/owner/repo/pull/123
 /review-until-green add coderabbit as reviewer
+/review-until-green with copilot
 ```
 
 ## CLI commands
